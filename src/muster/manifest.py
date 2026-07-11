@@ -54,8 +54,9 @@ def latest_run_directory(runs_dir: Path) -> Path | None:
     return directories[-1] if directories else None
 
 
-def _new_run_directory(runs_dir: Path, started_at: datetime) -> Path:
-    stamp = started_at.strftime("%Y%m%dT%H%M%SZ")
+def create_run_directory(runs_dir: Path, started_at: datetime) -> Path:
+    """Create a fresh, uniquely named directory for one run's artefacts."""
+    stamp = started_at.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     candidate = runs_dir / stamp
     suffix = 1
     while candidate.exists():
@@ -66,7 +67,7 @@ def _new_run_directory(runs_dir: Path, started_at: datetime) -> Path:
 
 
 def write_manifest(
-    runs_dir: Path,
+    run_dir: Path,
     *,
     started_at: datetime,
     finished_at: datetime,
@@ -77,18 +78,19 @@ def write_manifest(
 ) -> Path:
     """Write the manifest for one run, chained to the previous manifest.
 
-    ``inputs`` is (name, path, rows) per source file; ``outputs`` maps output
-    names to written files. Returns the manifest path.
+    ``run_dir`` comes from :func:`create_run_directory`; its siblings that
+    already hold a manifest are the run history. ``inputs`` is (name, path,
+    rows) per source file; ``outputs`` maps output names to written files.
+    Returns the manifest path.
     """
     previous = None
-    latest = latest_run_directory(runs_dir)
+    latest = latest_run_directory(run_dir.parent)
     if latest is not None:
         previous = {
             "run_id": latest.name,
             "sha256": sha256_file(latest / MANIFEST_NAME),
         }
 
-    run_dir = _new_run_directory(runs_dir, started_at)
     manifest = {
         "run_id": run_dir.name,
         "muster_version": __version__,

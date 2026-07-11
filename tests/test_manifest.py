@@ -8,6 +8,7 @@ import pytest
 
 from muster.manifest import (
     ManifestError,
+    create_run_directory,
     latest_run_directory,
     sha256_file,
     verify_chain,
@@ -23,7 +24,7 @@ def _write_run(tmp_path: Path, started: datetime, rows: int) -> Path:
     output = tmp_path / "out.csv"
     output.write_text("a\n", encoding="utf-8")
     return write_manifest(
-        tmp_path / "runs",
+        create_run_directory(tmp_path / "runs", started),
         started_at=started,
         finished_at=started + timedelta(seconds=1),
         config_path=config,
