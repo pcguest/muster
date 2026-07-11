@@ -212,12 +212,27 @@ class Config(BaseModel):
         return self
 
 
+# Marks an unreviewed inference in a generated configuration; see scaffold.py.
+_PROPOSED_MARKER = re.compile(r"#\s*PROPOSED\b")
+
+
 def load_config(path: Path) -> Config:
-    """Load and validate a configuration file."""
+    """Load and validate a configuration file.
+
+    A generated configuration still carrying PROPOSED markers is refused:
+    auto-generation never silently becomes the configuration of record.
+    """
     if not path.is_file():
         raise ConfigError(f"configuration file not found: {path}")
+    text = path.read_text(encoding="utf-8")
+    if _PROPOSED_MARKER.search(text):
+        raise ConfigError(
+            f"{path} still contains PROPOSED markers from 'muster init --from'; "
+            "review each inference and delete its marker, or run 'muster confirm' "
+            "to accept them all"
+        )
     try:
-        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        raw = yaml.safe_load(text)
     except yaml.YAMLError as exc:
         raise ConfigError(f"could not parse {path}: {exc}") from exc
     if not isinstance(raw, dict):

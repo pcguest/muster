@@ -1,4 +1,4 @@
-"""Command-line interface: muster init, profile, run and report."""
+"""Command-line interface: muster init, confirm, profile, run and report."""
 
 import dataclasses
 import json
@@ -17,6 +17,7 @@ from muster.manifest import RUNS_DIRECTORY, latest_run_directory
 from muster.pipeline import PipelineError, run_pipeline
 from muster.profiling import FileProfile, profile_folder
 from muster.report import REPORT_DATA_NAME, RunReportData, write_report
+from muster.scaffold import confirm_text, propose_config
 
 logger = logging.getLogger(__name__)
 
@@ -44,17 +45,73 @@ def init(
     path: Annotated[
         Path, typer.Option(help="Where to write the starter configuration.")
     ] = Path("muster.yaml"),
+    from_folder: Annotated[
+        Optional[Path],
+        typer.Option(
+            "--from",
+            help="Propose the canonical schema by profiling this folder's files.",
+        ),
+    ] = None,
     force: Annotated[
         bool, typer.Option("--force", help="Overwrite an existing file.")
     ] = False,
 ) -> None:
-    """Write a starter muster.yaml with an example canonical schema."""
+    """Write a starter muster.yaml, or propose one from real files.
+
+    With --from, the schema is inferred by profiling the folder and every
+    inference is marked PROPOSED: muster refuses to run until you review
+    them and remove the markers (or accept them all with 'muster confirm').
+    """
     if path.exists() and not force:
         errors.print(f"{path} already exists; pass --force to overwrite it.")
         raise typer.Exit(code=1)
-    path.write_text(CONFIG_TEMPLATE, encoding="utf-8")
+    if from_folder is None:
+        path.write_text(CONFIG_TEMPLATE, encoding="utf-8")
+        console.print(
+            f"Wrote {path}. Edit the canonical schema and sources, then run 'muster run'."
+        )
+        return
+    try:
+        profiles = profile_folder(from_folder)
+        text = propose_config(profiles, from_folder.as_posix())
+    except (FileNotFoundError, ConfigError) as exc:
+        errors.print(str(exc))
+        raise typer.Exit(code=1) from exc
+    path.write_text(text, encoding="utf-8")
+    fields = text.count("  - name:")
     console.print(
-        f"Wrote {path}. Edit the canonical schema and sources, then run 'muster run'."
+        f"Proposed {path} with {fields} field(s) from "
+        f"{sum(1 for p in profiles if p.error is None)} file(s)."
+    )
+    console.print(
+        "Every inference is marked PROPOSED and muster will not run until you "
+        "review them: edit the file, or accept them all with 'muster confirm'."
+    )
+
+
+@app.command()
+def confirm(
+    config_path: Annotated[
+        Path, typer.Option("--config", help="Path to muster.yaml.")
+    ] = Path("muster.yaml"),
+) -> None:
+    """Accept every PROPOSED inference in a generated configuration."""
+    if not config_path.is_file():
+        errors.print(f"configuration file not found: {config_path}")
+        raise typer.Exit(code=1)
+    text = config_path.read_text(encoding="utf-8")
+    try:
+        confirmed, count = confirm_text(text)
+    except ConfigError as exc:
+        errors.print(str(exc))
+        raise typer.Exit(code=1) from exc
+    if not count:
+        console.print(f"{config_path} has no PROPOSED markers; nothing to confirm.")
+        return
+    config_path.write_text(confirmed, encoding="utf-8")
+    console.print(
+        f"Confirmed {count} proposed inference(s); {config_path} is now the "
+        "configuration of record."
     )
 
 
