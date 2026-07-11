@@ -1,0 +1,5 @@
+customer_id,full_name,email,signup_date,lifetime_value,active
+C-001,Alice Nguyen,alice.nguyen@example.com,2023-04-12,1520.75,true
+C-002,Ben Carter,ben.carter@example.com,2022-11-30,310.00,false
+C-003,Chloe Davis,chloe.davis@example.com,2024-01-08,95.20,true
+C-004,Dev Sharma,dev.sharma@example.com,2023-08-21,2200.00,true
