@@ -4,7 +4,9 @@ import polars as pl
 
 from muster.config import Config, FieldSpec
 from muster.pipeline import discover_sources
-from muster.records import ExceptionRecord, write_exceptions
+from muster.records import ExceptionRecord, count_by_severity, write_exceptions
+
+COLUMNS = ["file", "row", "column", "value", "kind", "severity", "reason"]
 
 
 def test_write_exceptions_produces_expected_columns(tmp_path):
@@ -14,16 +16,20 @@ def test_write_exceptions_produces_expected_columns(tmp_path):
             ExceptionRecord(
                 file="a.csv", row=4, column="Total Spend", value="n/a",
                 reason="cannot coerce to float for field 'lifetime_value'",
+                kind="coercion",
             ),
-            ExceptionRecord(file="a.csv", column="Notes", reason="unmapped column"),
+            ExceptionRecord(
+                file="a.csv", column="Notes", reason="unmapped column",
+                kind="unmapped_column", severity="warning",
+            ),
         ],
         path,
     )
     frame = pl.read_csv(path)
-    assert frame.columns == ["file", "row", "column", "value", "reason"]
+    assert frame.columns == COLUMNS
     assert frame.height == 2
     assert frame.row(0) == (
-        "a.csv", 4, "Total Spend", "n/a",
+        "a.csv", 4, "Total Spend", "n/a", "coercion", "error",
         "cannot coerce to float for field 'lifetime_value'",
     )
 
@@ -32,8 +38,18 @@ def test_write_exceptions_with_no_records_writes_header_only(tmp_path):
     path = tmp_path / "exceptions.csv"
     write_exceptions([], path)
     frame = pl.read_csv(path)
-    assert frame.columns == ["file", "row", "column", "value", "reason"]
+    assert frame.columns == COLUMNS
     assert frame.height == 0
+
+
+def test_count_by_severity_reports_both_severities():
+    records = [
+        ExceptionRecord(file="a.csv", reason="x"),
+        ExceptionRecord(file="a.csv", reason="y", severity="warning"),
+        ExceptionRecord(file="a.csv", reason="z"),
+    ]
+    assert count_by_severity(records) == {"error": 2, "warning": 1}
+    assert count_by_severity([]) == {"error": 0, "warning": 0}
 
 
 def test_oversized_file_is_recorded_not_read(tmp_path):

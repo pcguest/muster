@@ -66,7 +66,9 @@ def discover_sources(
             try:
                 resolved = ensure_within(path, root)
             except SecurityError as exc:
-                exceptions.append(ExceptionRecord(file=str(path), reason=str(exc)))
+                exceptions.append(
+                    ExceptionRecord(file=str(path), reason=str(exc), kind="file_skipped")
+                )
                 continue
             if resolved in seen:
                 continue
@@ -83,13 +85,16 @@ def discover_sources(
                     ExceptionRecord(
                         file=str(relative),
                         reason=f"unsupported file type '{resolved.suffix}'",
+                        kind="file_skipped",
                     )
                 )
                 continue
             try:
                 ensure_size_within(resolved, config.limits.max_file_size_mb)
             except SecurityError as exc:
-                exceptions.append(ExceptionRecord(file=str(relative), reason=str(exc)))
+                exceptions.append(
+                    ExceptionRecord(file=str(relative), reason=str(exc), kind="file_skipped")
+                )
                 continue
             files.append(resolved)
     logger.info("discovered files=%d exceptions=%d", len(files), len(exceptions))
@@ -106,7 +111,9 @@ def _consolidate_file(
     try:
         frame = read_table(path)
     except ReaderError as exc:
-        exceptions.append(ExceptionRecord(file=relative, reason=str(exc)))
+        exceptions.append(
+            ExceptionRecord(file=relative, reason=str(exc), kind="file_unreadable")
+        )
         return None
 
     source_columns = [name for name in frame.columns if name != ROW_COLUMN]
@@ -120,6 +127,8 @@ def _consolidate_file(
                     file=relative,
                     column=match.source,
                     reason=f"unmapped column: {match.reason}",
+                    kind="unmapped_column",
+                    severity="warning",
                 )
             )
     for spec in config.fields:
@@ -129,6 +138,7 @@ def _consolidate_file(
                     file=relative,
                     column=spec.name,
                     reason=f"required field '{spec.name}' not found in file",
+                    kind="missing_required_column",
                 )
             )
 
@@ -153,6 +163,7 @@ def _consolidate_file(
                     column=source,
                     value=original[index],
                     reason=f"cannot coerce to {spec.type} for field '{spec.name}'",
+                    kind="coercion",
                 )
             )
         columns.append(coerced.rename(spec.name))
