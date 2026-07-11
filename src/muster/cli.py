@@ -3,6 +3,7 @@
 import dataclasses
 import json
 import logging
+import shutil
 from pathlib import Path
 from typing import Annotated, Optional
 
@@ -21,9 +22,10 @@ from muster.assist import (
     write_review_file,
 )
 from muster.config import CONFIG_TEMPLATE, Config, ConfigError, load_config
+from muster.demo import write_demo
 from muster.logs import configure_logging
 from muster.manifest import RUNS_DIRECTORY, latest_run_directory
-from muster.pipeline import PipelineError, run_pipeline
+from muster.pipeline import PipelineError, RunResult, run_pipeline
 from muster.profiling import FileProfile, profile_folder
 from muster.report import REPORT_DATA_NAME, RunReportData, write_report
 from muster.scaffold import confirm_text, propose_config
@@ -171,6 +173,21 @@ def profile(
     console.print(f"Profiled {len(profiles)} file(s); report written to {output}.")
 
 
+def _print_run_summary(result: RunResult) -> None:
+    console.print(
+        f"Published {result.rows_published} of {result.rows_in} row(s) from "
+        f"{result.files_read} file(s); {result.rows_held} held, "
+        f"{result.rows_superseded} superseded."
+    )
+    console.print(f"  dataset:    {result.output_parquet} and {result.output_csv}")
+    console.print(
+        f"  exceptions: {result.error_count} error(s), {result.warning_count} "
+        f"warning(s) in {result.exceptions_csv}"
+    )
+    console.print(f"  report:     {result.report_html}")
+    console.print(f"  manifest:   {result.manifest_path}")
+
+
 def _propose_and_write(
     config: Config, root: Path, unmapped_samples: dict[str, list[str]]
 ) -> None:
@@ -228,22 +245,57 @@ def run(
     except (ConfigError, PipelineError, AssistError) as exc:
         errors.print(str(exc))
         raise typer.Exit(code=1) from exc
-    console.print(
-        f"Published {result.rows_published} of {result.rows_in} row(s) from "
-        f"{result.files_read} file(s); {result.rows_held} held, "
-        f"{result.rows_superseded} superseded."
-    )
-    console.print(f"  dataset:    {result.output_parquet} and {result.output_csv}")
-    console.print(
-        f"  exceptions: {result.error_count} error(s), {result.warning_count} "
-        f"warning(s) in {result.exceptions_csv}"
-    )
-    console.print(f"  report:     {result.report_html}")
-    console.print(f"  manifest:   {result.manifest_path}")
+    _print_run_summary(result)
     if assist:
         _propose_and_write(config, root, result.unmapped_samples)
     if result.error_count:
         raise typer.Exit(code=2)
+
+
+@app.command()
+def demo(
+    path: Annotated[
+        Path, typer.Option(help="Where to create the demo project.")
+    ] = Path("demo"),
+    force: Annotated[
+        bool, typer.Option("--force", help="Replace an existing demo folder's files.")
+    ] = False,
+) -> None:
+    """Generate the synthetic grain-receivals demo and run the pipeline on it.
+
+    Three invented sites record the same receivals with clashing headings,
+    date formats and conventions, plus deliberate conflicts and rule
+    violations. Every value is invented; no real growers, sites or
+    organisations appear.
+    """
+    if path.exists() and not force:
+        errors.print(f"{path} already exists; pass --force to write the demo anyway.")
+        raise typer.Exit(code=1)
+    if force and path.exists():
+        shutil.rmtree(path)
+    files = write_demo(path)
+    console.print(f"Wrote the demo project to {path}/:")
+    for written in files:
+        console.print(f"  {written}")
+    config_path = (path / "muster.yaml").resolve()
+    try:
+        config = load_config(config_path)
+        result = run_pipeline(config, config_path.parent, config_path)
+    except (ConfigError, PipelineError) as exc:
+        errors.print(str(exc))
+        raise typer.Exit(code=1) from exc
+    console.print()
+    _print_run_summary(result)
+    console.print(
+        f"\nThe demo data misbehaves on purpose: {result.error_count} error(s) "
+        f"and {result.warning_count} warning(s) are expected, and a real "
+        "'muster run' would exit with code 2 here."
+    )
+    console.print(
+        f"Open {result.report_html} to see the run report, and try "
+        f"'muster init --from {path / 'sources'}' to watch a configuration "
+        "being proposed from these files."
+    )
 
 
 @app.command()
