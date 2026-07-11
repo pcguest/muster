@@ -1,10 +1,10 @@
-"""Command-line interface: muster init, profile and run."""
+"""Command-line interface: muster init, profile, run and report."""
 
 import dataclasses
 import json
 import logging
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Optional
 
 import typer
 from rich.console import Console
@@ -13,8 +13,10 @@ from rich.table import Table
 from muster import __version__
 from muster.config import CONFIG_TEMPLATE, ConfigError, load_config
 from muster.logs import configure_logging
+from muster.manifest import RUNS_DIRECTORY, latest_run_directory
 from muster.pipeline import PipelineError, run_pipeline
 from muster.profiling import FileProfile, profile_folder
+from muster.report import REPORT_DATA_NAME, RunReportData, write_report
 
 logger = logging.getLogger(__name__)
 
@@ -109,17 +111,66 @@ def run(
         Path, typer.Option("--config", help="Path to muster.yaml.")
     ] = Path("muster.yaml"),
 ) -> None:
-    """Consolidate all configured sources into one governed dataset."""
+    """Consolidate, validate and reconcile all configured sources.
+
+    Exits 0 on a clean run (warnings allowed), 2 if any error-severity
+    exceptions were recorded, and 1 if the run could not proceed — so a CI
+    job or cron entry fails loudly when the governed dataset is incomplete.
+    """
     try:
         config = load_config(config_path)
-        result = run_pipeline(config, config_path.resolve().parent)
+        result = run_pipeline(config, config_path.resolve().parent, config_path.resolve())
     except (ConfigError, PipelineError) as exc:
         errors.print(str(exc))
         raise typer.Exit(code=1) from exc
     console.print(
-        f"Consolidated {result.rows_out} row(s) from {result.files_read} file(s)."
+        f"Published {result.rows_published} of {result.rows_in} row(s) from "
+        f"{result.files_read} file(s); {result.rows_held} held, "
+        f"{result.rows_superseded} superseded."
     )
     console.print(f"  dataset:    {result.output_parquet} and {result.output_csv}")
     console.print(
-        f"  exceptions: {result.exception_count} recorded in {result.exceptions_csv}"
+        f"  exceptions: {result.error_count} error(s), {result.warning_count} "
+        f"warning(s) in {result.exceptions_csv}"
     )
+    console.print(f"  report:     {result.report_html}")
+    console.print(f"  manifest:   {result.manifest_path}")
+    if result.error_count:
+        raise typer.Exit(code=2)
+
+
+@app.command()
+def report(
+    config_path: Annotated[
+        Path, typer.Option("--config", help="Path to muster.yaml.")
+    ] = Path("muster.yaml"),
+    run_id: Annotated[
+        Optional[str],
+        typer.Option("--run", help="Run to render; defaults to the latest."),
+    ] = None,
+    output: Annotated[
+        Optional[Path], typer.Option(help="Where to write report.html.")
+    ] = None,
+) -> None:
+    """Re-render the HTML report for a past run from its archived data."""
+    try:
+        config = load_config(config_path)
+    except ConfigError as exc:
+        errors.print(str(exc))
+        raise typer.Exit(code=1) from exc
+    root = config_path.resolve().parent
+    runs_dir = root / RUNS_DIRECTORY
+    run_dir = runs_dir / run_id if run_id else latest_run_directory(runs_dir)
+    if run_dir is None or not (run_dir / REPORT_DATA_NAME).is_file():
+        errors.print(
+            f"no run data found under {runs_dir}; run 'muster run' first"
+            + (f" (looked for run '{run_id}')" if run_id else "")
+        )
+        raise typer.Exit(code=1)
+    data = RunReportData.from_json(
+        (run_dir / REPORT_DATA_NAME).read_text(encoding="utf-8")
+    )
+    destination = output or root / config.output.directory / "report.html"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    write_report(data, destination)
+    console.print(f"Rendered run {run_dir.name} to {destination}.")

@@ -1,0 +1,5 @@
+Cust ID,Name,E-Mail,Date Joined,LTV,Is Active
+C-001,Alice Nguyen,alice.nguyen@example.com,12/04/2023,1600.00,true
+C-030,Priya Raj,not-an-email,10/02/2024,450.00,true
+C-031,Owen Hale,owen.hale@example.org,15/03/2024,-20.00,false
+C-004,Dev Sharma,,21/08/2023,2200.00,yes

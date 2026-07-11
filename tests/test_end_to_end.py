@@ -1,8 +1,9 @@
-"""End-to-end test: init, profile and run over three disagreeing fixtures.
+"""End-to-end test: init, profile, run and report over disagreeing fixtures.
 
 The fixtures share one customer schema but disagree on column names, date
-formats, number styles and boolean spellings, and include one unmappable
-column and two uncoercible cells.
+formats, number styles and boolean spellings, and deliberately include an
+unmappable column, uncoercible cells, rule violations (bad email, negative
+lifetime value), an agreeing duplicate key and a conflicting duplicate key.
 """
 
 import json
@@ -13,19 +14,29 @@ import polars as pl
 from typer.testing import CliRunner
 
 from muster.cli import app
+from muster.manifest import verify_chain
 
 FIXTURES = Path(__file__).parent / "fixtures"
-FIXTURE_FILES = ["customers_north.csv", "clients_south.csv", "customers_west.xlsx"]
+FIXTURE_FILES = [
+    "customers_north.csv",
+    "clients_south.csv",
+    "customers_west.xlsx",
+    "customers_east.csv",
+]
 
 runner = CliRunner()
 
 
-def test_init_profile_run(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
+def _stage(tmp_path):
     sources = tmp_path / "sources"
     sources.mkdir()
     for name in FIXTURE_FILES:
         shutil.copy(FIXTURES / name, sources / name)
+
+
+def test_init_profile_run_report(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _stage(tmp_path)
 
     result = runner.invoke(app, ["init"])
     assert result.exit_code == 0, result.output
@@ -34,17 +45,21 @@ def test_init_profile_run(tmp_path, monkeypatch):
     result = runner.invoke(app, ["profile", "sources"])
     assert result.exit_code == 0, result.output
     report = json.loads((tmp_path / "profile.json").read_text(encoding="utf-8"))
-    assert len(report["files"]) == 3
+    assert len(report["files"]) == 4
     south = next(f for f in report["files"] if f["file"] == "clients_south.csv")
     assert south["rows"] == 4
     spend = next(c for c in south["columns"] if c["name"] == "Total Spend")
     assert any("thousands separators" in issue for issue in spend["issues"])
 
+    # Error-severity exceptions make the run exit 2 — CI/cron friendly.
     result = runner.invoke(app, ["run"])
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 2, result.output
+    assert "Published 11 of 16 row(s) from 4 file(s); 4 held, 1 superseded." in result.output
+    assert "report:" in result.output
+    assert "manifest:" in result.output
 
     consolidated = pl.read_parquet(tmp_path / "output" / "consolidated.parquet")
-    assert consolidated.height == 12
+    assert consolidated.height == 11
     assert consolidated.columns == [
         "_source_file",
         "customer_id",
@@ -55,48 +70,83 @@ def test_init_profile_run(tmp_path, monkeypatch):
         "active",
     ]
     assert consolidated.get_column("signup_date").dtype == pl.Date
-    # Three date formats normalised to one representation.
-    dates = dict(
-        zip(
-            consolidated.get_column("customer_id").to_list(),
-            consolidated.get_column("signup_date").to_list(),
-        )
-    )
-    assert str(dates["C-001"]) == "2023-04-12"  # ISO in the north file
-    assert str(dates["C-010"]) == "2023-02-14"  # day-first in the south file
-    assert str(dates["C-020"]) == "2024-03-05"  # '05 Mar 2024' in the west file
-    assert dates["C-022"] is None  # uncoercible, captured as an exception
-    # Thousands separators normalised; failed cell nulled, not guessed.
-    values = dict(
-        zip(
-            consolidated.get_column("customer_id").to_list(),
-            consolidated.get_column("lifetime_value").to_list(),
-        )
-    )
-    assert values["C-010"] == 1204.5
-    assert values["C-012"] is None
+    rows = {
+        r["customer_id"]: r for r in consolidated.iter_rows(named=True)
+    }
 
-    csv_copy = pl.read_csv(tmp_path / "output" / "consolidated.csv")
-    assert csv_copy.height == 12
+    # Three date formats normalised to one representation.
+    assert str(rows["C-002"]["signup_date"]) == "2022-11-30"  # ISO in the north file
+    assert str(rows["C-010"]["signup_date"]) == "2023-02-14"  # day-first in the south file
+    assert str(rows["C-020"]["signup_date"]) == "2024-03-05"  # '05 Mar 2024' in the west file
+    # Thousands separators normalised.
+    assert rows["C-010"]["lifetime_value"] == 1204.5
+
+    # Error-severity rows are held out of the governed dataset:
+    # C-001 conflicts across files, C-012 and C-022 failed coercion.
+    for held in ("C-001", "C-012", "C-022"):
+        assert held not in rows
+    # Agreeing duplicate merged: north's email survives (east's is empty)
+    # and provenance names both files, in discovery order.
+    merged = rows["C-004"]
+    assert merged["email"] == "dev.sharma@example.com"
+    assert merged["_source_file"] == (
+        "sources/customers_east.csv; sources/customers_north.csv"
+    )
+    # Warning-severity violations are published and reported.
+    assert rows["C-030"]["email"] == "not-an-email"
+    assert rows["C-031"]["lifetime_value"] == -20.0
 
     exceptions = pl.read_csv(tmp_path / "output" / "exceptions.csv")
-    assert exceptions.height == 3
-    rows = {
-        (r["file"], r["column"]): r for r in exceptions.iter_rows(named=True)
+    assert exceptions.columns == ["file", "row", "column", "value", "kind", "severity", "reason"]
+    by_kind = {
+        (r["kind"], r["severity"]): r for r in exceptions.iter_rows(named=True)
     }
-    unmapped = rows[("sources/clients_south.csv", "Notes")]
-    assert "unmapped column" in unmapped["reason"]
-    bad_float = rows[("sources/clients_south.csv", "Total Spend")]
-    assert bad_float["row"] == 4
-    assert bad_float["value"] == "n/a"
-    assert "cannot coerce to float" in bad_float["reason"]
-    bad_date = rows[("sources/customers_west.xlsx", "Signup Date")]
-    assert bad_date["row"] == 4
-    assert bad_date["value"] == "sometime in June"
-    assert "cannot coerce to date" in bad_date["reason"]
+    assert exceptions.height == 7
+    assert ("unmapped_column", "warning") in by_kind
+    assert ("rule_regex", "warning") in by_kind
+    assert by_kind[("rule_regex", "warning")]["value"] == "not-an-email"
+    assert ("rule_range", "warning") in by_kind
+    assert by_kind[("rule_range", "warning")]["value"] == "-20.0"
+    assert ("duplicate_key", "warning") in by_kind
+    conflict = by_kind[("conflict", "error")]
+    assert conflict["column"] == "lifetime_value"
+    assert "1520.75" in conflict["value"] and "1600.0" in conflict["value"]
+    assert "no survivorship strategy configured" in conflict["reason"]
+    coercions = exceptions.filter(pl.col("kind") == "coercion")
+    assert coercions.height == 2
+    assert set(coercions.get_column("value").to_list()) == {"n/a", "sometime in June"}
+    assert (coercions.get_column("severity") == "error").all()
+
+    # The report and the chained manifest exist and carry the run's numbers.
+    report_html = (tmp_path / "output" / "report.html").read_text(encoding="utf-8")
+    for expected in ("Muster run report", "rows published", "Conflicts held for review"):
+        assert expected in report_html
+    run_ids = verify_chain(tmp_path / "runs")
+    assert len(run_ids) == 1
+    manifest = json.loads(
+        (tmp_path / "runs" / run_ids[0] / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["totals"] == {
+        "rows_in": 16,
+        "rows_published": 11,
+        "rows_held": 4,
+        "rows_superseded": 1,
+        "errors": 3,
+        "warnings": 4,
+    }
+    assert len(manifest["inputs"]) == 4
+    assert manifest["previous_manifest"] is None
+
+    # muster report re-renders the archived run without touching the sources.
+    (tmp_path / "output" / "report.html").unlink()
+    result = runner.invoke(app, ["report"])
+    assert result.exit_code == 0, result.output
+    assert "Muster run report" in (tmp_path / "output" / "report.html").read_text(
+        encoding="utf-8"
+    )
 
 
-def test_run_is_repeatable_without_consuming_its_own_output(tmp_path, monkeypatch):
+def test_reruns_chain_manifests_and_ignore_own_output(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     sources = tmp_path / "sources"
     sources.mkdir()
@@ -106,3 +156,4 @@ def test_run_is_repeatable_without_consuming_its_own_output(tmp_path, monkeypatc
     assert runner.invoke(app, ["run"]).exit_code == 0
     consolidated = pl.read_parquet(tmp_path / "output" / "consolidated.parquet")
     assert consolidated.height == 4
+    assert len(verify_chain(tmp_path / "runs")) == 2

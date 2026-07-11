@@ -12,6 +12,7 @@ dist/
 /sources/
 /output/
 /profile.json
+/runs/
 
 # OS
 .DS_Store
