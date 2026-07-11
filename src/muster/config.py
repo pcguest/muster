@@ -136,6 +136,8 @@ class LimitsConfig(BaseModel):
     """Safety limits applied to untrusted input."""
 
     max_file_size_mb: int = Field(default=100, ge=1)
+    # Rows read from a source file at a time; bounds peak memory per file.
+    chunk_rows: int = Field(default=100_000, ge=1)
 
 
 class OutputConfig(BaseModel):
@@ -230,8 +232,7 @@ def load_config(path: Path) -> Config:
     return config
 
 
-CONFIG_TEMPLATE = """\
-# muster.yaml — configuration for Muster.
+CONFIG_TEMPLATE = r"""# muster.yaml — configuration for Muster.
 #
 # Muster reads every file matched by `sources`, maps each column onto the
 # canonical schema below, coerces values to the declared types, and writes a
@@ -321,10 +322,12 @@ validation:
   #   strategy: priority_list
   #   priority: ["sources/master.xlsx", "sources/regional.csv"]
 
-# Safety limits. Source files larger than this are skipped and recorded in
-# exceptions.csv.
+# Safety limits. Source files larger than max_file_size_mb are skipped and
+# recorded in exceptions.csv. chunk_rows bounds how many rows are read from
+# a file at a time, which bounds peak memory on large files.
 limits:
   max_file_size_mb: 100
+  chunk_rows: 100000
 
 # Where the consolidated dataset (Parquet and CSV) and exceptions.csv are
 # written, relative to this file.

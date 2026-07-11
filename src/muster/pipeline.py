@@ -14,6 +14,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Mapping
 
 import polars as pl
 
@@ -26,7 +27,7 @@ from muster.manifest import (
     write_manifest,
 )
 from muster.mapping import ColumnMatch, map_columns
-from muster.readers import ROW_COLUMN, ReaderError, read_table
+from muster.readers import ROW_COLUMN, ReaderError, iter_table_chunks
 from muster.reconcile import reconcile
 from muster.records import ExceptionRecord, count_by_severity, write_exceptions
 from muster.report import REPORT_DATA_NAME, build_report, write_report
@@ -120,62 +121,27 @@ def discover_sources(
     return files, exceptions
 
 
-def _consolidate_file(
-    path: Path,
+def _coerce_chunk(
+    chunk: pl.DataFrame,
     relative: str,
     config: Config,
+    source_for: Mapping[str, str],
     exceptions: list[ExceptionRecord],
-    mappings: list[tuple[str, ColumnMatch]],
-) -> pl.DataFrame | None:
-    """Map and coerce one file; append its exceptions; return its rows."""
-    try:
-        frame = read_table(path)
-    except ReaderError as exc:
-        exceptions.append(
-            ExceptionRecord(file=relative, reason=str(exc), kind="file_unreadable")
-        )
-        return None
-
-    source_columns = [name for name in frame.columns if name != ROW_COLUMN]
-    matches = map_columns(source_columns, config.fields, config.matching.fuzzy_threshold)
-    mappings.extend((relative, match) for match in matches)
-    source_for = {m.target: m.source for m in matches if m.target}
-
-    for match in matches:
-        if match.target is None:
-            exceptions.append(
-                ExceptionRecord(
-                    file=relative,
-                    column=match.source,
-                    reason=f"unmapped column: {match.reason}",
-                    kind="unmapped_column",
-                    severity="warning",
-                )
-            )
-    for spec in config.fields:
-        if spec.required and spec.name not in source_for:
-            exceptions.append(
-                ExceptionRecord(
-                    file=relative,
-                    column=spec.name,
-                    reason=f"required field '{spec.name}' not found in file",
-                    kind="missing_required_column",
-                )
-            )
-
-    row_numbers = frame.get_column(ROW_COLUMN)
+) -> pl.DataFrame:
+    """Coerce one string-typed chunk into the internal typed schema."""
+    row_numbers = chunk.get_column(ROW_COLUMN)
     columns: list[pl.Series] = [
-        pl.Series(SOURCE_FILE_COLUMN, [relative] * frame.height, dtype=pl.String),
+        pl.Series(SOURCE_FILE_COLUMN, [relative] * chunk.height, dtype=pl.String),
         row_numbers.cast(pl.Int64).rename(ROW_COLUMN),
     ]
     for spec in config.fields:
         source = source_for.get(spec.name)
         if source is None:
             columns.append(
-                pl.Series(spec.name, [None] * frame.height, dtype=TYPE_DTYPES[spec.type])
+                pl.Series(spec.name, [None] * chunk.height, dtype=TYPE_DTYPES[spec.type])
             )
             continue
-        original = frame.get_column(source)
+        original = chunk.get_column(source)
         coerced, failed = coerce_series(original, spec.type)
         for index in failed.arg_true().to_list():
             exceptions.append(
@@ -189,9 +155,72 @@ def _consolidate_file(
                 )
             )
         columns.append(coerced.rename(spec.name))
-
-    logger.info("consolidated file=%s rows=%d", relative, frame.height)
     return pl.DataFrame(columns)
+
+
+def _consolidate_file(
+    path: Path,
+    relative: str,
+    config: Config,
+    exceptions: list[ExceptionRecord],
+    mappings: list[tuple[str, ColumnMatch]],
+) -> pl.DataFrame | None:
+    """Map and coerce one file chunk by chunk; append its exceptions.
+
+    Exceptions are buffered locally and only appended when the whole file
+    reads cleanly, so a file that fails mid-read contributes exactly one
+    ``file_unreadable`` record and no rows — never a partial mixture.
+    """
+    local: list[ExceptionRecord] = []
+    local_mappings: list[tuple[str, ColumnMatch]] = []
+    source_for: dict[str, str] = {}
+    typed_chunks: list[pl.DataFrame] = []
+    mapped = False
+    try:
+        for chunk in iter_table_chunks(path, config.limits.chunk_rows):
+            if not mapped:
+                mapped = True
+                source_columns = [n for n in chunk.columns if n != ROW_COLUMN]
+                matches = map_columns(
+                    source_columns, config.fields, config.matching.fuzzy_threshold
+                )
+                local_mappings.extend((relative, match) for match in matches)
+                source_for = {m.target: m.source for m in matches if m.target}
+                for match in matches:
+                    if match.target is None:
+                        local.append(
+                            ExceptionRecord(
+                                file=relative,
+                                column=match.source,
+                                reason=f"unmapped column: {match.reason}",
+                                kind="unmapped_column",
+                                severity="warning",
+                            )
+                        )
+                for spec in config.fields:
+                    if spec.required and spec.name not in source_for:
+                        local.append(
+                            ExceptionRecord(
+                                file=relative,
+                                column=spec.name,
+                                reason=f"required field '{spec.name}' not found in file",
+                                kind="missing_required_column",
+                            )
+                        )
+            typed_chunks.append(_coerce_chunk(chunk, relative, config, source_for, local))
+    except ReaderError as exc:
+        exceptions.append(
+            ExceptionRecord(file=relative, reason=str(exc), kind="file_unreadable")
+        )
+        return None
+
+    exceptions.extend(local)
+    mappings.extend(local_mappings)
+    frame = pl.concat(typed_chunks, how="vertical")
+    logger.info(
+        "consolidated file=%s rows=%d chunks=%d", relative, frame.height, len(typed_chunks)
+    )
+    return frame
 
 
 def _internal_schema(config: Config) -> dict[str, pl.DataType]:
