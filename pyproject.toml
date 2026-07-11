@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "muster"
+version = "0.1.0"
+description = "Consolidate inconsistent spreadsheets into one governed dataset."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{ name = "Paddy Guest", email = "patrickcguest@proton.me" }]
+keywords = ["spreadsheets", "csv", "xlsx", "data-consolidation", "data-quality"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Office/Business",
+]
+dependencies = [
+    "typer>=0.12",
+    "polars>=1.0",
+    "pydantic>=2.7",
+    "rapidfuzz>=3.6",
+    "PyYAML>=6.0",
+    "fastexcel>=0.11",
+    "rich>=13.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "XlsxWriter>=3.2",
+]
+
+[project.scripts]
+muster = "muster.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
