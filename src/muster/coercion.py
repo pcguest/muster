@@ -6,16 +6,21 @@ list of formats — day-first before month-first, so a month-first date is only
 accepted when no day-first reading is possible. The order is deterministic
 and documented here; nothing is inferred per file.
 
-Dates are parsed per cell with Python's ``datetime.strptime`` rather than the
-vectorised parser: Polars' native strptime can panic on malformed strings,
-and input files are untrusted, so a bad cell must become an exception record,
-never a crash.
+All-numeric formats are parsed with Polars' vectorised parsers in non-strict
+mode, one expression per format, coalesced in order: a malformed cell becomes
+a null, never a crash. Month-name formats (``%b``/``%B``) are deliberately
+NOT vectorised — Polars' fast-path parser for them does unchecked slicing
+keyed off the first row and panics on crafted or merely unlucky value mixes,
+and input files are untrusted. Cells the vectorised formats cannot parse fall
+back to per-cell ``datetime.strptime`` for the month-name formats only, which
+preserves the documented format order because a month-name reading can never
+overlap an all-numeric one.
 """
 
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime
+from datetime import datetime
 
 import polars as pl
 
@@ -58,6 +63,19 @@ DATETIME_FORMATS = [
 ]
 
 
+def _chrono(fmt: str) -> str:
+    """Translate a Python strptime format to its chrono (Polars) equivalent."""
+    return fmt.replace(".%f", "%.f")
+
+
+def _has_month_name(fmt: str) -> bool:
+    return "%b" in fmt or "%B" in fmt
+
+
+_VECTOR_DATE_FORMATS = [f for f in DATE_FORMATS if not _has_month_name(f)]
+_FALLBACK_DATE_FORMATS = [f for f in DATE_FORMATS if _has_month_name(f)]
+
+
 def _numeric_expr(cleaned: pl.Expr, dtype: pl.DataType) -> pl.Expr:
     without_grouping = (
         pl.when(cleaned.str.contains(_THOUSANDS_PATTERN))
@@ -78,22 +96,56 @@ def _boolean_expr(cleaned: pl.Expr) -> pl.Expr:
     )
 
 
-def _parse_date(value: str) -> date | None:
-    for fmt in DATE_FORMATS + DATETIME_FORMATS:
-        try:
-            return datetime.strptime(value, fmt).date()
-        except ValueError:
-            continue
-    return None
+def _date_expr(cleaned: pl.Expr) -> pl.Expr:
+    """The first accepted all-numeric date reading, in documented order."""
+    readings = [
+        cleaned.str.to_date(_chrono(fmt), strict=False)
+        for fmt in _VECTOR_DATE_FORMATS
+    ] + [
+        cleaned.str.to_datetime(_chrono(fmt), strict=False, time_unit="us").dt.date()
+        for fmt in DATETIME_FORMATS
+    ]
+    return pl.coalesce(readings)
 
 
-def _parse_datetime(value: str) -> datetime | None:
-    for fmt in DATETIME_FORMATS + DATE_FORMATS:
+def _datetime_expr(cleaned: pl.Expr) -> pl.Expr:
+    """The first accepted datetime reading; date-only formats give midnight."""
+    readings = [
+        cleaned.str.to_datetime(_chrono(fmt), strict=False, time_unit="us")
+        for fmt in DATETIME_FORMATS
+    ] + [
+        cleaned.str.to_date(_chrono(fmt), strict=False).cast(pl.Datetime("us"))
+        for fmt in _VECTOR_DATE_FORMATS
+    ]
+    return pl.coalesce(readings)
+
+
+def _month_name_fallback(value: str) -> datetime | None:
+    for fmt in _FALLBACK_DATE_FORMATS:
         try:
             return datetime.strptime(value, fmt)
         except ValueError:
             continue
     return None
+
+
+def _apply_month_name_fallback(
+    coerced: pl.Series, cleaned: pl.Series, field_type: FieldType
+) -> pl.Series:
+    """Per-cell parse of month-name dates for cells left null by the
+    vectorised formats. Runs only on those cells, so a clean numeric column
+    pays nothing."""
+    unresolved = (coerced.is_null() & cleaned.is_not_null()).arg_true()
+    if unresolved.is_empty():
+        return coerced
+    parsed = [_month_name_fallback(cleaned[i]) for i in unresolved.to_list()]
+    if field_type == "date":
+        values = [p.date() if p is not None else None for p in parsed]
+    else:
+        values = parsed
+    return coerced.scatter(
+        unresolved, pl.Series(values, dtype=TYPE_DTYPES[field_type])
+    )
 
 
 def coerce_series(values: pl.Series, field_type: FieldType) -> tuple[pl.Series, pl.Series]:
@@ -107,30 +159,31 @@ def coerce_series(values: pl.Series, field_type: FieldType) -> tuple[pl.Series, 
     cleaned = pl.col("value").str.strip_chars()
     empty = cleaned.is_null() | (cleaned == pl.lit(""))
 
+    if field_type == "string":
+        coerced = pl.when(empty).then(pl.lit(None, dtype=pl.String)).otherwise(cleaned)
+    elif field_type == "integer":
+        coerced = _numeric_expr(cleaned, pl.Int64())
+    elif field_type == "float":
+        coerced = _numeric_expr(cleaned, pl.Float64())
+    elif field_type == "boolean":
+        coerced = _boolean_expr(cleaned)
+    elif field_type == "date":
+        coerced = _date_expr(cleaned)
+    elif field_type == "datetime":
+        coerced = _datetime_expr(cleaned)
+    else:  # defensive: config validation should make this unreachable
+        raise ValueError(f"unknown field type '{field_type}'")
+    result = frame.select(
+        cleaned=pl.when(empty).then(pl.lit(None, dtype=pl.String)).otherwise(cleaned),
+        coerced=coerced,
+    )
+    cleaned_series = result.get_column("cleaned")
+    coerced_series = result.get_column("coerced").rename(values.name)
     if field_type in ("date", "datetime"):
-        parser = _parse_date if field_type == "date" else _parse_datetime
-        cleaned_values = frame.select(v=cleaned).get_column("v").to_list()
-        parsed = [parser(v) if v else None for v in cleaned_values]
-        coerced_series = pl.Series(values.name, parsed, dtype=TYPE_DTYPES[field_type])
-        empty_series = frame.select(e=empty).get_column("e")
-        failed_series = coerced_series.is_null() & ~empty_series
-    else:
-        if field_type == "string":
-            coerced = pl.when(empty).then(pl.lit(None, dtype=pl.String)).otherwise(cleaned)
-        elif field_type == "integer":
-            coerced = _numeric_expr(cleaned, pl.Int64())
-        elif field_type == "float":
-            coerced = _numeric_expr(cleaned, pl.Float64())
-        elif field_type == "boolean":
-            coerced = _boolean_expr(cleaned)
-        else:  # defensive: config validation should make this unreachable
-            raise ValueError(f"unknown field type '{field_type}'")
-        result = frame.select(
-            coerced=coerced,
-            failed=coerced.is_null() & ~empty,
+        coerced_series = _apply_month_name_fallback(
+            coerced_series, cleaned_series, field_type
         )
-        coerced_series = result.get_column("coerced").rename(values.name)
-        failed_series = result.get_column("failed")
+    failed_series = coerced_series.is_null() & cleaned_series.is_not_null()
     failures = int(failed_series.sum())
     if failures:
         logger.debug(

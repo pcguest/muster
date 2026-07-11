@@ -138,11 +138,13 @@ def reconcile(
         )
     result.rows_held += frame.filter(null_key).height
 
-    published: list[pl.DataFrame] = []
-    for group in frame.filter(~null_key).partition_by(keys, maintain_order=True):
-        if group.height == 1:
-            published.append(group)
-            continue
+    # Rows whose key is unique pass straight through; only duplicated keys
+    # are partitioned into groups, so group handling costs nothing on the
+    # (overwhelmingly common) unique rows.
+    working = frame.filter(~null_key)
+    duplicated = working.select(d=pl.struct(keys).is_duplicated()).get_column("d")
+    published: list[pl.DataFrame] = [working.filter(~duplicated)]
+    for group in working.filter(duplicated).partition_by(keys, maintain_order=True):
         first = group.row(0, named=True)
         key_text = _key_display(first, keys)
         conflicting = _conflicting_fields(group, field_names)
@@ -197,10 +199,7 @@ def reconcile(
             result.rows_held += group.height
             result.conflicts_held += 1
 
-    if published:
-        result.frame = pl.concat(published, how="vertical")
-    else:
-        result.frame = frame.clear()
+    result.frame = pl.concat(published, how="vertical")
     logger.info(
         "reconciled rows_in=%d rows_out=%d held=%d merged=%d conflicts_held=%d",
         frame.height,

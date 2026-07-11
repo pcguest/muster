@@ -53,6 +53,37 @@ def test_day_first_is_preferred_over_month_first():
     ]
 
 
+def test_month_name_mixes_never_crash_the_parser():
+    # Polars' vectorised %b/%B fast path panics on this exact value mix, so
+    # month-name formats must go through the per-cell fallback. Untrusted
+    # input becomes a failure record, never a crash.
+    coerced, failed = coerce_series(
+        pl.Series("d", ["05 Mar 2024", "17 Sep 2022", "sometime in June", "22 Dec 2023"]),
+        "date",
+    )
+    assert coerced.to_list() == [
+        datetime.date(2024, 3, 5),
+        datetime.date(2022, 9, 17),
+        None,
+        datetime.date(2023, 12, 22),
+    ]
+    assert failed.to_list() == [False, False, True, False]
+
+
+def test_datetime_coercion_reads_dates_as_midnight():
+    coerced, failed = coerce_series(
+        pl.Series("t", ["2024-01-02T03:04:05", "14/02/2023", "12 June 2023", "nope"]),
+        "datetime",
+    )
+    assert coerced.to_list() == [
+        datetime.datetime(2024, 1, 2, 3, 4, 5),
+        datetime.datetime(2023, 2, 14),
+        datetime.datetime(2023, 6, 12),
+        None,
+    ]
+    assert failed.to_list() == [False, False, False, True]
+
+
 def test_empty_cells_become_nulls_not_failures():
     coerced, failed = coerce_series(pl.Series("v", ["", "  ", None, "5"]), "integer")
     assert coerced.to_list() == [None, None, None, 5]
