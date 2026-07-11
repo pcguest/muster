@@ -132,6 +132,46 @@ class MatchingConfig(BaseModel):
     fuzzy_threshold: float = Field(default=90, ge=0, le=100)
 
 
+class RedactionConfig(BaseModel):
+    """How sample values are redacted before leaving the machine."""
+
+    mask_digits: bool = True
+    truncate: int = Field(default=24, ge=1)
+
+
+class AssistConfig(BaseModel):
+    """Optional LLM assistance for columns fuzzy matching cannot map.
+
+    Off unless ``muster run --assist`` is used AND the MUSTER_LLM_API_KEY
+    environment variable is set (the key never lives in this file). Only
+    column headings, inferred types and up to ``max_samples`` redacted
+    sample values are ever sent — no cell data and no file names leave the
+    machine, and nothing is applied until a person accepts it.
+    """
+
+    provider: Literal["anthropic", "openai_compatible"] = "anthropic"
+    base_url: str | None = None
+    model: str = "claude-sonnet-5"
+    max_samples: int = Field(default=5, ge=0, le=5)  # hard privacy ceiling
+    timeout_seconds: int = Field(default=60, ge=1, le=600)
+    redaction: RedactionConfig = Field(default_factory=RedactionConfig)
+
+    @model_validator(mode="after")
+    def _base_url_fits_provider(self) -> AssistConfig:
+        if self.provider == "openai_compatible" and not self.base_url:
+            raise ValueError(
+                "openai_compatible provider needs base_url, e.g. https://api.openai.com/v1"
+            )
+        if self.base_url and not self.base_url.startswith(("https://", "http://")):
+            raise ValueError("assist base_url must be an http(s) URL")
+        return self
+
+    def resolved_base_url(self) -> str:
+        if self.base_url:
+            return self.base_url.rstrip("/")
+        return "https://api.anthropic.com"
+
+
 class LimitsConfig(BaseModel):
     """Safety limits applied to untrusted input."""
 
@@ -175,6 +215,7 @@ class Config(BaseModel):
     limits: LimitsConfig = Field(default_factory=LimitsConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
     validation: ValidationConfig = Field(default_factory=ValidationConfig)
+    assist: AssistConfig = Field(default_factory=AssistConfig)
 
     @model_validator(mode="after")
     def _rules_fit_field_types(self) -> Config:
@@ -343,6 +384,23 @@ validation:
 limits:
   max_file_size_mb: 100
   chunk_rows: 100000
+
+# Optional LLM assistance for columns fuzzy matching cannot map. Used only
+# by 'muster run --assist', and only when the MUSTER_LLM_API_KEY environment
+# variable is set — the key never lives in this file, and without it the
+# feature is simply unavailable. Privacy: only column headings, inferred
+# types and up to max_samples redacted sample values are sent; cell data and
+# file names never leave the machine. Proposals go to mapping-review.yaml
+# with confidence and rationale, and nothing is applied until a person
+# accepts it ('muster review', or edit the file).
+assist:
+  provider: anthropic          # or openai_compatible (then set base_url)
+  # base_url: https://api.openai.com/v1
+  model: claude-sonnet-5
+  max_samples: 5               # hard ceiling of 5
+  redaction:
+    mask_digits: true          # digits become '#'
+    truncate: 24               # samples are cut to this many characters
 
 # Where the consolidated dataset (Parquet and CSV) and exceptions.csv are
 # written, relative to this file.

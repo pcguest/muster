@@ -119,6 +119,11 @@ def _profile_column(name: str, values: list[str | None]) -> ColumnProfile:
     return ColumnProfile(name, inferred, non_empty, issues)
 
 
+def infer_type(values: list[str | None]) -> str:
+    """The type a sample of raw string values reads as, e.g. for assist."""
+    return _profile_column("", values).inferred_type
+
+
 def profile_file(path: Path, max_file_size_mb: int) -> FileProfile:
     """Profile one spreadsheet; failures are reported, not raised."""
     profile = FileProfile(file=path.name)

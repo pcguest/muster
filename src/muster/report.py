@@ -301,6 +301,7 @@ td.num, th.num { text-align: right; font-family: var(--mono); font-variant-numer
 .tag.exact { color: var(--good); border-color: var(--good); }
 .tag.synonym { color: var(--accent); border-color: var(--accent); }
 .tag.fuzzy { color: var(--warn); border-color: var(--warn); }
+.tag.assist { color: var(--accent); border-color: var(--accent); }
 .tag.unmapped { color: var(--bad); border-color: var(--bad); }
 .sev-error { color: var(--bad); font-weight: 600; }
 .sev-warning { color: var(--warn); font-weight: 600; }

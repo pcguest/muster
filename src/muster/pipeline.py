@@ -48,6 +48,11 @@ class PipelineError(RuntimeError):
     """Raised when the pipeline cannot proceed at all."""
 
 
+# Raw sample values kept per unmapped column so --assist has evidence to
+# redact and send; never more than this many are kept, let alone sent.
+_MAX_UNMAPPED_SAMPLES = 5
+
+
 @dataclass(frozen=True)
 class RunResult:
     files_read: int
@@ -62,6 +67,8 @@ class RunResult:
     exceptions_csv: Path
     report_html: Path
     manifest_path: Path
+    # unmapped column heading -> a few raw sample values, for --assist
+    unmapped_samples: dict[str, list[str]]
 
 
 def discover_sources(
@@ -158,12 +165,25 @@ def _coerce_chunk(
     return pl.DataFrame(columns)
 
 
+def _sample_values(chunk: pl.DataFrame, column: str) -> list[str]:
+    """A few distinct non-empty raw values from a chunk, as assist evidence."""
+    samples: list[str] = []
+    for value in chunk.get_column(column).to_list():
+        if value and value.strip() and value not in samples:
+            samples.append(value)
+            if len(samples) == _MAX_UNMAPPED_SAMPLES:
+                break
+    return samples
+
+
 def _consolidate_file(
     path: Path,
     relative: str,
     config: Config,
     exceptions: list[ExceptionRecord],
     mappings: list[tuple[str, ColumnMatch]],
+    accepted: Mapping[str, str],
+    unmapped_samples: dict[str, list[str]],
 ) -> pl.DataFrame | None:
     """Map and coerce one file chunk by chunk; append its exceptions.
 
@@ -173,6 +193,7 @@ def _consolidate_file(
     """
     local: list[ExceptionRecord] = []
     local_mappings: list[tuple[str, ColumnMatch]] = []
+    local_samples: dict[str, list[str]] = {}
     source_for: dict[str, str] = {}
     typed_chunks: list[pl.DataFrame] = []
     mapped = False
@@ -182,7 +203,10 @@ def _consolidate_file(
                 mapped = True
                 source_columns = [n for n in chunk.columns if n != ROW_COLUMN]
                 matches = map_columns(
-                    source_columns, config.fields, config.matching.fuzzy_threshold
+                    source_columns,
+                    config.fields,
+                    config.matching.fuzzy_threshold,
+                    accepted,
                 )
                 local_mappings.extend((relative, match) for match in matches)
                 source_for = {m.target: m.source for m in matches if m.target}
@@ -196,6 +220,9 @@ def _consolidate_file(
                                 kind="unmapped_column",
                                 severity="warning",
                             )
+                        )
+                        local_samples[match.source] = _sample_values(
+                            chunk, match.source
                         )
                 for spec in config.fields:
                     if spec.required and spec.name not in source_for:
@@ -216,6 +243,11 @@ def _consolidate_file(
 
     exceptions.extend(local)
     mappings.extend(local_mappings)
+    for column, samples in local_samples.items():
+        merged = unmapped_samples.setdefault(column, [])
+        for value in samples:
+            if value not in merged and len(merged) < _MAX_UNMAPPED_SAMPLES:
+                merged.append(value)
     frame = pl.concat(typed_chunks, how="vertical")
     logger.info(
         "consolidated file=%s rows=%d chunks=%d", relative, frame.height, len(typed_chunks)
@@ -245,8 +277,17 @@ def _drop_held_rows(
     return frame.join(held_frame, on=[SOURCE_FILE_COLUMN, ROW_COLUMN], how="anti")
 
 
-def run_pipeline(config: Config, root: Path, config_path: Path) -> RunResult:
-    """Run the full pipeline rooted at the configuration file's directory."""
+def run_pipeline(
+    config: Config,
+    root: Path,
+    config_path: Path,
+    accepted: Mapping[str, str] | None = None,
+) -> RunResult:
+    """Run the full pipeline rooted at the configuration file's directory.
+
+    ``accepted`` holds human-approved assisted mappings (normalised heading
+    to canonical field) from the mapping review file.
+    """
     started_at = datetime.now(timezone.utc)
     root = root.resolve()
     files, exceptions = discover_sources(config, root)
@@ -260,9 +301,12 @@ def run_pipeline(config: Config, root: Path, config_path: Path) -> RunResult:
     file_rows: dict[str, int] = {}
     mtimes: dict[str, float] = {}
     inputs: list[tuple[str, Path, int]] = []
+    unmapped_samples: dict[str, list[str]] = {}
     for path in files:
         relative = str(path.relative_to(root))
-        frame = _consolidate_file(path, relative, config, exceptions, mappings)
+        frame = _consolidate_file(
+            path, relative, config, exceptions, mappings, accepted or {}, unmapped_samples
+        )
         rows = frame.height if frame is not None else 0
         file_rows[relative] = rows
         mtimes[relative] = path.stat().st_mtime
@@ -365,4 +409,5 @@ def run_pipeline(config: Config, root: Path, config_path: Path) -> RunResult:
         exceptions_csv=exceptions_csv,
         report_html=report_html,
         manifest_path=manifest_path,
+        unmapped_samples=unmapped_samples,
     )

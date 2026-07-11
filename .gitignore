@@ -13,6 +13,8 @@ dist/
 /output/
 /profile.json
 /runs/
+/mapping-review.yaml
+/demo/
 
 # OS
 .DS_Store

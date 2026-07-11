@@ -5,7 +5,9 @@ Matching runs in three stages of decreasing confidence:
 1. exact — the heading equals a canonical field name verbatim;
 2. synonym — the heading equals a declared synonym (or canonical name),
    compared case- and punctuation-insensitively;
-3. fuzzy — the normalised heading is compared to every canonical name and
+3. assist — the heading matches a mapping a person accepted in the
+   assisted-mapping review file (LLM-proposed, human-approved);
+4. fuzzy — the normalised heading is compared to every canonical name and
    synonym with rapidfuzz; the best score at or above the threshold wins.
 
 Each canonical field maps from at most one source column per file. A column
@@ -18,7 +20,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
-from typing import Sequence
+from typing import Mapping, Sequence
 
 from rapidfuzz import fuzz
 
@@ -49,8 +51,14 @@ def map_columns(
     source_columns: Sequence[str],
     fields: Sequence[FieldSpec],
     threshold: float,
+    accepted: Mapping[str, str] | None = None,
 ) -> list[ColumnMatch]:
-    """Match source columns to canonical fields, one column per field."""
+    """Match source columns to canonical fields, one column per field.
+
+    ``accepted`` maps normalised headings to fields, from human-approved
+    assisted-mapping proposals; it ranks below declared synonyms and above
+    fuzzy matching.
+    """
     exact_names = {field.name: field.name for field in fields}
     synonym_lookup: dict[str, str] = {}
     for field in fields:
@@ -83,6 +91,14 @@ def map_columns(
         target = synonym_lookup.get(normalise(column))
         if target is not None:
             claim(column, target, "synonym", 100.0)
+
+    if accepted:
+        for column in source_columns:
+            if column in matched:
+                continue
+            target = accepted.get(normalise(column))
+            if target is not None:
+                claim(column, target, "assist", 100.0)
 
     # Score every remaining column first, then claim best-first so the
     # strongest fuzzy match wins when two columns point at one field.
