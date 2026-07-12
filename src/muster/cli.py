@@ -1,4 +1,4 @@
-"""Command-line interface: init, confirm, profile, run, review and report."""
+"""Command-line interface: init, confirm, profile, run, review, publish and report."""
 
 import dataclasses
 import json
@@ -22,10 +22,12 @@ from muster.assist import (
     write_review_file,
 )
 from muster.config import CONFIG_TEMPLATE, Config, ConfigError, load_config
+from muster.credentials import redact_text
 from muster.demo import write_demo
 from muster.logs import configure_logging
-from muster.manifest import RUNS_DIRECTORY, latest_run_directory
+from muster.manifest import RUNS_DIRECTORY, latest_manifest_of_kind
 from muster.pipeline import PipelineError, RunResult, run_pipeline
+from muster.publish import PublishError, publish_dataset
 from muster.profiling import FileProfile, profile_folder
 from muster.report import REPORT_DATA_NAME, RunReportData, write_report
 from muster.scaffold import confirm_text, propose_config
@@ -296,6 +298,11 @@ def demo(
         f"'muster init --from {path / 'sources'}' to watch a configuration "
         "being proposed from these files."
     )
+    console.print(
+        f"A 'warehouse' sqlite target is configured too: from {path}/, try "
+        "'muster publish warehouse --dry-run' — the real publish refuses "
+        "because of the demo's deliberate errors, unless you pass --force."
+    )
 
 
 @app.command()
@@ -383,6 +390,76 @@ def review(
 
 
 @app.command()
+def publish(
+    target: Annotated[
+        Optional[str],
+        typer.Argument(
+            help="Target from 'targets:' in muster.yaml; optional when only "
+            "one is configured."
+        ),
+    ] = None,
+    config_path: Annotated[
+        Path, typer.Option("--config", help="Path to muster.yaml.")
+    ] = Path("muster.yaml"),
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Print what would happen; write nothing."),
+    ] = False,
+    force: Annotated[
+        bool,
+        typer.Option(
+            "--force",
+            help="Publish even though the latest run recorded error-severity "
+            "exceptions (recorded loudly in the manifest chain).",
+        ),
+    ] = False,
+) -> None:
+    """Publish the latest governed dataset to a configured target.
+
+    The dataset is verified against the latest run manifest before anything
+    is sent, a run with error-severity exceptions is refused without
+    --force, and every publish appends to the tamper-evident manifest
+    chain. Exits 0 when everything landed, 2 when some records failed
+    (see publish-exceptions.csv), and 1 when the publish could not proceed.
+    """
+    try:
+        config = load_config(config_path)
+        root = config_path.resolve().parent
+        result = publish_dataset(
+            config, root, target, dry_run=dry_run, force=force
+        )
+    except (ConfigError, PublishError) as exc:
+        errors.print(redact_text(str(exc)))
+        raise typer.Exit(code=1) from exc
+    if result.forced:
+        errors.print(
+            "FORCED: the source run recorded error-severity exceptions and "
+            "--force was given; this override is recorded in the manifest chain."
+        )
+    if dry_run:
+        console.print(
+            f"Dry run for target '{result.target}' ({result.target_type}) — "
+            "nothing will be written:"
+        )
+        for line in result.plan:
+            console.print(f"  - {line}")
+        console.print(f"Dataset: {result.rows} row(s) from run {result.source_run}.")
+        return
+    console.print(
+        f"Published {result.rows_sent} of {result.rows} row(s) to target "
+        f"'{result.target}' — {redact_text(result.destination)} — in "
+        f"{result.duration_seconds:.1f}s."
+    )
+    if result.rows_failed:
+        errors.print(
+            f"{result.rows_failed} record(s) failed; see {result.exceptions_csv}."
+        )
+    console.print(f"  manifest: {result.manifest_path}")
+    if result.rows_failed:
+        raise typer.Exit(code=2)
+
+
+@app.command()
 def report(
     config_path: Annotated[
         Path, typer.Option("--config", help="Path to muster.yaml.")
@@ -403,7 +480,13 @@ def report(
         raise typer.Exit(code=1) from exc
     root = config_path.resolve().parent
     runs_dir = root / RUNS_DIRECTORY
-    run_dir = runs_dir / run_id if run_id else latest_run_directory(runs_dir)
+    if run_id:
+        run_dir = runs_dir / run_id
+    else:
+        # Publish manifests share the runs directory; report on the latest
+        # pipeline run, not the latest chain entry.
+        found = latest_manifest_of_kind(runs_dir, "run")
+        run_dir = found[0].parent if found else None
     if run_dir is None or not (run_dir / REPORT_DATA_NAME).is_file():
         errors.print(
             f"no run data found under {runs_dir}; run 'muster run' first"

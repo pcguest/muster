@@ -89,6 +89,16 @@ limits:
 output:
   directory: output
   dataset_name: receivals
+
+# One publish target so 'muster publish' can be tried end to end: it upserts
+# the governed dataset into a SQLite file next to this configuration. The
+# demo run records deliberate errors, so the publish refuses without --force
+# — exactly what a real incomplete dataset should do.
+targets:
+  warehouse:
+    type: sqlite
+    path: warehouse.db
+    table: receivals
 """
 
 # Karrilong writes tidy, canonical headings and ISO dates.
