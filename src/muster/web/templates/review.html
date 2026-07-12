@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Muster — mapping review{% endblock %}
+{% block heading %}mapping review{% endblock %}
+{% block content %}
+<section>
+  <h2>Assisted-mapping proposals</h2>
+  {% if review is none %}
+  <div class="panel empty-state">
+    <p>No review file yet. Run <code>muster run --assist</code> to gather
+    proposals for unmapped columns; they will appear here for a decision.</p>
+  </div>
+  {% else %}
+  <p class="meta">Proposed by {{ review.provider }} model
+  <code>{{ review.model }}</code> at {{ review.generated_at }}. Only column
+  headings, inferred types and the redacted samples shown here ever left the
+  machine. Nothing applies until accepted.</p>
+  <div class="panel">
+  <table>
+    <tr><th>Column</th><th>Proposed target</th><th class="num">Confidence</th>
+        <th>Rationale</th><th>Samples sent (redacted)</th><th>Decision</th></tr>
+    {% for p in review.proposals %}
+    <tr>
+      <td>{{ p.column }}</td>
+      <td>{% if p.target %}<code>{{ p.target }}</code>{% else %}<span class="empty">none</span>{% endif %}</td>
+      <td class="num">{{ '%.0f' | format(p.confidence) }}</td>
+      <td>{{ p.rationale }}</td>
+      <td class="values">{{ p.samples | join(', ') }}</td>
+      <td>
+        {% if p.status == 'pending' %}
+        <form method="post" action="/review/{{ loop.index0 }}" class="decide">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <button type="submit" name="action" value="accept" class="primary"
+                  {% if not p.target %}disabled{% endif %}>Accept</button>
+          <button type="submit" name="action" value="reject" class="quiet">Reject</button>
+        </form>
+        {% else %}
+        <span class="tag {{ 'exact' if p.status == 'accepted' else 'unmapped' }}">{{ p.status }}</span>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div>
+  <p class="meta">Accepted mappings apply from the next run, exactly as with
+  <code>muster review</code> in the terminal.</p>
+  {% endif %}
+</section>
+{% endblock %}

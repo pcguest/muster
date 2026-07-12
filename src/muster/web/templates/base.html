@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Muster{% endblock %}</title>
+<link rel="stylesheet" href="/static/muster.css">
+</head>
+<body>
+<header>
+  <div class="masthead">
+    <h1><span>Muster</span> {% block heading %}{% endblock %}</h1>
+    {% if active %}
+    <nav>
+      <a href="/" {% if active == 'dashboard' %}class="on"{% endif %}>Dashboard</a>
+      <a href="/exceptions" {% if active == 'exceptions' %}class="on"{% endif %}>Exceptions</a>
+      <a href="/review" {% if active == 'review' %}class="on"{% endif %}>Mapping review</a>
+      <a href="/report">Report</a>
+      <form method="post" action="/run" class="inline">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <button type="submit" class="primary" {% if run_state.running %}disabled{% endif %}>
+          {% if run_state.running %}Run in progress…{% else %}Run pipeline{% endif %}
+        </button>
+      </form>
+      <form method="post" action="/logout" class="inline">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <button type="submit" class="quiet">Log out</button>
+      </form>
+    </nav>
+    {% endif %}
+  </div>
+</header>
+{% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
+<main>
+{% block content %}{% endblock %}
+</main>
+<footer>
+  Muster v{{ version }} · local-first — this page loads nothing from the network.
+</footer>
+</body>
+</html>

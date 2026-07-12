@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Muster — log in{% endblock %}
+{% block heading %}log in{% endblock %}
+{% block content %}
+<div class="login-panel">
+  <p>This dashboard is single-user. Paste the login token printed by
+  <code>muster serve</code> — it is stored in {{ token_home }}.</p>
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  <form method="post" action="/login">
+    <label for="token">Login token</label>
+    <input type="password" id="token" name="token" autocomplete="off" autofocus required>
+    <button type="submit" class="primary">Log in</button>
+  </form>
+</div>
+{% endblock %}

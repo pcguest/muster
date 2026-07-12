@@ -4,8 +4,9 @@ import dataclasses
 import json
 import logging
 import shutil
+from datetime import datetime
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
 from rich.console import Console
@@ -27,10 +28,23 @@ from muster.demo import write_demo
 from muster.logs import configure_logging
 from muster.manifest import RUNS_DIRECTORY, latest_manifest_of_kind
 from muster.pipeline import PipelineError, RunResult, run_pipeline
-from muster.publish import PublishError, publish_dataset
 from muster.profiling import FileProfile, profile_folder
+from muster.publish import PublishError, publish_dataset
 from muster.report import REPORT_DATA_NAME, RunReportData, write_report
 from muster.scaffold import confirm_text, propose_config
+from muster.scheduler import (
+    CronExpression,
+    SchedulerError,
+    configure_daemon_logging,
+    cron_line,
+    daemon_loop,
+    daemon_pid,
+    read_schedule,
+    start_daemon,
+    stop_daemon,
+    systemd_unit,
+    write_schedule,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +73,7 @@ def init(
         Path, typer.Option(help="Where to write the starter configuration.")
     ] = Path("muster.yaml"),
     from_folder: Annotated[
-        Optional[Path],
+        Path | None,
         typer.Option(
             "--from",
             help="Propose the canonical schema by profiling this folder's files.",
@@ -311,7 +325,7 @@ def review(
         Path, typer.Option("--config", help="Path to muster.yaml.")
     ] = Path("muster.yaml"),
     review_file: Annotated[
-        Optional[Path],
+        Path | None,
         typer.Option("--file", help="Review file; defaults to mapping-review.yaml."),
     ] = None,
     accept_all: Annotated[
@@ -392,7 +406,7 @@ def review(
 @app.command()
 def publish(
     target: Annotated[
-        Optional[str],
+        str | None,
         typer.Argument(
             help="Target from 'targets:' in muster.yaml; optional when only "
             "one is configured."
@@ -460,16 +474,174 @@ def publish(
 
 
 @app.command()
+def schedule(
+    expression: Annotated[
+        str | None,
+        typer.Argument(
+            help='Five-field cron expression, e.g. "*/15 * * * *", or an '
+            "alias like @hourly."
+        ),
+    ] = None,
+    config_path: Annotated[
+        Path, typer.Option("--config", help="Path to muster.yaml.")
+    ] = Path("muster.yaml"),
+    print_units: Annotated[
+        bool,
+        typer.Option(
+            "--print",
+            help="Print a ready-to-use systemd unit and cron line instead of "
+            "relying on the muster daemon.",
+        ),
+    ] = False,
+) -> None:
+    """Set (or show) the cron schedule the daemon runs the pipeline on.
+
+    The schedule is stored in muster.schedule beside muster.yaml and picked
+    up by a running daemon without a restart. Prefer the operating system's
+    scheduler where available: --print emits the equivalent systemd unit
+    and crontab line.
+    """
+    root = config_path.resolve().parent
+    try:
+        if expression is not None:
+            parsed = CronExpression.parse(expression)
+            path = write_schedule(root, parsed)
+            console.print(f"Schedule '{parsed.raw}' written to {path}.")
+        else:
+            parsed = read_schedule(root)
+            console.print(f"Current schedule: '{parsed.raw}'")
+    except SchedulerError as exc:
+        errors.print(str(exc))
+        raise typer.Exit(code=1) from exc
+    moment = datetime.now()
+    fires = []
+    for _ in range(3):
+        moment = parsed.next_after(moment)
+        fires.append(moment.isoformat(sep=" ", timespec="minutes"))
+    console.print(f"Next three runs: {', '.join(fires)}")
+    if print_units:
+        console.print("\n# systemd unit — save as ~/.config/systemd/user/muster.service")
+        console.print(systemd_unit(root))
+        console.print("# or a crontab line (crontab -e):")
+        console.print(cron_line(root, parsed))
+    else:
+        console.print(
+            "Start the daemon with 'muster daemon start' (or run 'muster "
+            "schedule --print' for systemd/cron units)."
+        )
+
+
+@app.command()
+def daemon(
+    action: Annotated[
+        str,
+        typer.Argument(help="start, stop, status, or run (foreground loop)."),
+    ],
+    config_path: Annotated[
+        Path, typer.Option("--config", help="Path to muster.yaml.")
+    ] = Path("muster.yaml"),
+) -> None:
+    """Control the scheduling daemon.
+
+    'start' launches the loop detached with a PID file under runs/ and a
+    size-rotated runs/daemon.log; 'run' keeps it in the foreground (what a
+    systemd unit should call). A failed scheduled run is recorded with its
+    exit code, and notified to the webhook named by MUSTER_WEBHOOK_URL when
+    that variable is set.
+    """
+    root = config_path.resolve().parent
+    runs_dir = root / RUNS_DIRECTORY
+    try:
+        if action == "start":
+            pid = start_daemon(root, config_path.resolve(), runs_dir)
+            console.print(
+                f"Daemon started with PID {pid}; schedule "
+                f"'{read_schedule(root).raw}', log {runs_dir / 'daemon.log'}."
+            )
+        elif action == "stop":
+            pid = stop_daemon(runs_dir)
+            console.print(f"Daemon with PID {pid} stopped.")
+        elif action == "status":
+            running = daemon_pid(runs_dir)
+            if running is None:
+                console.print("Daemon is not running.")
+                raise typer.Exit(code=3)  # mirrors systemctl's convention
+            parsed = read_schedule(root)
+            console.print(
+                f"Daemon running with PID {running}; schedule '{parsed.raw}', "
+                f"next run {parsed.next_after(datetime.now()).isoformat(sep=' ', timespec='minutes')}."
+            )
+        elif action == "run":
+            configure_daemon_logging(runs_dir)
+            daemon_loop(root, config_path.resolve())
+        else:
+            errors.print(f"unknown action '{action}': use start, stop, status or run.")
+            raise typer.Exit(code=1)
+    except SchedulerError as exc:
+        errors.print(str(exc))
+        raise typer.Exit(code=1) from exc
+
+
+@app.command()
+def serve(
+    config_path: Annotated[
+        Path, typer.Option("--config", help="Path to muster.yaml.")
+    ] = Path("muster.yaml"),
+    host: Annotated[
+        str,
+        typer.Option(
+            help="Address to bind. The default is local-only; binding "
+            "anything else exposes the dashboard to that network."
+        ),
+    ] = "127.0.0.1",
+    port: Annotated[int, typer.Option(min=1, max=65535)] = 8600,
+) -> None:
+    """Serve the local dashboard: runs, exceptions, mapping review, report.
+
+    Local-first: binds 127.0.0.1 unless --host says otherwise (with a
+    printed warning). A single login token is generated on first serve and
+    stored in the OS keyring (or an owner-only file when no keyring backend
+    exists); every page requires it.
+    """
+    import uvicorn
+
+    from muster.web import create_app
+    from muster.web.auth import load_or_create_token
+
+    try:
+        load_config(config_path)  # fail before binding, with a clear message
+    except ConfigError as exc:
+        errors.print(str(exc))
+        raise typer.Exit(code=1) from exc
+    root = config_path.resolve().parent
+    if host != "127.0.0.1":
+        errors.print(
+            f"WARNING: binding {host} exposes the dashboard beyond this "
+            "machine. Muster's web interface is designed to be local-first; "
+            "prefer an SSH tunnel over a wider bind."
+        )
+    token, token_home = load_or_create_token(root)
+    console.print(f"Login token (stored in {token_home}):\n  {token}")
+    console.print(f"Dashboard: http://{host}:{port}/  (Ctrl+C stops the server)")
+    uvicorn.run(
+        create_app(root, config_path.resolve()),
+        host=host,
+        port=port,
+        log_level="warning",
+    )
+
+
+@app.command()
 def report(
     config_path: Annotated[
         Path, typer.Option("--config", help="Path to muster.yaml.")
     ] = Path("muster.yaml"),
     run_id: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--run", help="Run to render; defaults to the latest."),
     ] = None,
     output: Annotated[
-        Optional[Path], typer.Option(help="Where to write report.html.")
+        Path | None, typer.Option(help="Where to write report.html.")
     ] = None,
 ) -> None:
     """Re-render the HTML report for a past run from its archived data."""
@@ -480,6 +652,7 @@ def report(
         raise typer.Exit(code=1) from exc
     root = config_path.resolve().parent
     runs_dir = root / RUNS_DIRECTORY
+    run_dir: Path | None
     if run_id:
         run_dir = runs_dir / run_id
     else:

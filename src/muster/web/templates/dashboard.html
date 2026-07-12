@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}Muster — dashboard{% endblock %}
+{% block heading %}dashboard{% endblock %}
+{% block content %}
+{% if report is none %}
+<div class="panel empty-state">
+  <p>No completed run yet. Press <strong>Run pipeline</strong> above, or run
+  <code>muster run</code> from the terminal, then refresh.</p>
+</div>
+{% else %}
+<section>
+  <h2>Latest run — {{ report.run_id }}</h2>
+  <div class="kpis">
+    <div class="kpi plain"><div class="n">{{ report.rows_in }}</div><div class="l">rows in</div></div>
+    <div class="kpi good"><div class="n">{{ report.rows_published }}</div><div class="l">rows published</div></div>
+    <div class="kpi {{ 'bad' if report.rows_held else 'good' }}"><div class="n">{{ report.rows_held }}</div><div class="l">rows held</div></div>
+    <div class="kpi plain"><div class="n">{{ report.rows_superseded }}</div><div class="l">superseded</div></div>
+    <div class="kpi {{ 'bad' if report.error_count else 'good' }}"><div class="n">{{ report.error_count }}</div><div class="l">errors</div></div>
+    <div class="kpi {{ 'warn' if report.warning_count else 'good' }}"><div class="n">{{ report.warning_count }}</div><div class="l">warnings</div></div>
+  </div>
+  <p class="meta">{{ report.files_read }} file(s) in {{ '%.2f' | format(report.duration_seconds) }}s
+  · config <code>{{ report.config_file }}</code>
+  (sha256 <code>{{ report.config_sha256[:12] }}…</code>)
+  {% if run_state.last_exit is not none %}
+  · last browser-triggered run exited {{ run_state.last_exit }}
+  {% endif %}</p>
+</section>
+
+<section>
+  <h2>Field quality — governed dataset</h2>
+  <div class="panel">
+  <table>
+    <tr><th>Field</th><th>Type</th><th>Required</th>
+        <th class="num">Completeness</th><th class="num">Validity</th></tr>
+    {% for f in report.fields %}
+    <tr>
+      <td>{{ f.name }}</td><td>{{ f.type }}</td><td>{{ 'yes' if f.required else '' }}</td>
+      {% for value in (f.completeness_pct, f.validity_pct) %}
+      {% if value is none %}<td class="num">—</td>{% else %}
+      <td class="num"><span class="bar"><i class="{{ 'good-fill' if value >= 95 else 'warn-fill' if value >= 80 else 'bad-fill' }}" style="width:{{ value }}%"></i></span>{{ value }}%</td>
+      {% endif %}
+      {% endfor %}
+    </tr>
+    {% endfor %}
+  </table>
+  </div>
+</section>
+{% endif %}
+
+<section>
+  <h2>Trends across runs</h2>
+  <div class="panel">
+  {% if trends %}
+  <table>
+    <tr><th>Run</th><th>Finished</th><th class="num">Rows in</th>
+        <th class="num">Published</th><th class="num">Errors</th>
+        <th class="num">Warnings</th><th class="num">Seconds</th></tr>
+    {% for t in trends %}
+    <tr>
+      <td><code>{{ t.run_id }}</code></td>
+      <td class="dim">{{ t.finished_at[:16].replace('T', ' ') }}</td>
+      <td class="num">{{ t.rows_in }}</td>
+      <td class="num"><span class="bar"><i class="good-fill" style="width:{{ (100 * t.rows_published / peak_rows) | round(1) }}%"></i></span>{{ t.rows_published }}</td>
+      <td class="num">{% if t.errors %}<span class="sev-error">{{ t.errors }}</span>{% else %}0{% endif %}</td>
+      <td class="num">{% if t.warnings %}<span class="sev-warning">{{ t.warnings }}</span>{% else %}0{% endif %}</td>
+      <td class="num">{{ '%.2f' | format(t.duration_seconds) }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p class="empty">No runs recorded yet.</p>
+  {% endif %}
+  </div>
+</section>
+{% endblock %}

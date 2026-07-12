@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Muster — exceptions{% endblock %}
+{% block heading %}exceptions{% endblock %}
+{% block content %}
+<section>
+  <h2>Latest run's exceptions</h2>
+  <form method="get" action="/exceptions" class="filters">
+    <label>Severity
+      <select name="severity">
+        <option value="">all</option>
+        <option value="error" {% if severity == 'error' %}selected{% endif %}>error</option>
+        <option value="warning" {% if severity == 'warning' %}selected{% endif %}>warning</option>
+      </select>
+    </label>
+    <label>Kind
+      <select name="kind">
+        <option value="">all</option>
+        {% for k in kinds %}
+        <option value="{{ k }}" {% if kind == k %}selected{% endif %}>{{ k }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>File
+      <select name="file">
+        <option value="">all</option>
+        {% for f in files %}
+        <option value="{{ f }}" {% if file == f %}selected{% endif %}>{{ f }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <button type="submit" class="quiet">Filter</button>
+  </form>
+
+  <div class="panel">
+  {% if rows %}
+  <table>
+    <tr><th>File</th><th>Row</th><th>Column</th><th>Value</th><th>Kind</th>
+        <th>Severity</th><th>Why</th><th>Decision</th></tr>
+    {% for r in rows %}
+    <tr>
+      <td>{{ r.file }}</td>
+      <td class="num">{{ r.row }}</td>
+      <td>{{ r.column }}</td>
+      <td class="values">{{ r.value }}</td>
+      <td><span class="tag">{{ r.kind }}</span></td>
+      <td class="sev-{{ r.severity }}">{{ r.severity }}</td>
+      <td>{{ r.reason }}</td>
+      <td>
+        {% if r.resolution %}
+        <span class="tag {{ 'exact' if r.resolution == 'resolved' else 'unmapped' }}">{{ r.resolution }}</span>
+        {% if r.note %}<div class="dim note">{{ r.note }}</div>{% endif %}
+        <div class="dim note">{{ r.resolved_at }}</div>
+        {% else %}
+        <form method="post" action="/exceptions/{{ r.id }}" class="decide">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="text" name="note" maxlength="500" placeholder="note (optional)">
+          <button type="submit" name="action" value="resolved" class="primary">Resolve</button>
+          <button type="submit" name="action" value="dismissed" class="quiet">Dismiss</button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p class="empty">No exceptions match — or the latest run was clean.</p>
+  {% endif %}
+  </div>
+  <p class="meta">Decisions append to <code>runs/resolutions.jsonl</code>;
+  the run's own record is never rewritten.</p>
+</section>
+{% endblock %}
