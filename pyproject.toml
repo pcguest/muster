@@ -12,15 +12,20 @@ license = "MIT"
 authors = [{ name = "Paddy Guest", email = "patrickcguest@proton.me" }]
 keywords = ["spreadsheets", "csv", "xlsx", "data-consolidation", "data-quality"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 5 - Production/Stable",
     "Environment :: Console",
+    "Environment :: Web Environment",
     "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
     "Topic :: Office/Business",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+    "Typing :: Typed",
 ]
 dependencies = [
     "typer>=0.12",
@@ -51,7 +56,16 @@ dev = [
     "mypy>=1.10",
     "bandit>=1.7",
     "pip-audit>=2.7",
+    "build>=1.2",
+    "twine>=5.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/patrickcguest/muster"
+Repository = "https://github.com/patrickcguest/muster"
+Documentation = "https://github.com/patrickcguest/muster/tree/main/docs"
+Changelog = "https://github.com/patrickcguest/muster/blob/main/CHANGELOG.md"
+Issues = "https://github.com/patrickcguest/muster/issues"
 
 [project.scripts]
 muster = "muster.cli:app"
@@ -60,7 +74,7 @@ muster = "muster.cli:app"
 where = ["src"]
 
 [tool.setuptools.package-data]
-muster = ["web/templates/*.html", "web/static/*.css"]
+muster = ["py.typed", "web/templates/*.html", "web/static/*.css"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
