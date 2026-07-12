@@ -52,6 +52,12 @@ muster run
 muster run --assist
 muster review
 
+# Publish the latest governed dataset to a configured target — sqlite,
+# postgres, a REST endpoint or Salesforce (see docs/CONNECTORS.md). Dry-run
+# prints what would happen and writes nothing.
+muster publish
+muster publish warehouse --dry-run
+
 # Re-render the HTML report for the latest run (or --run <id> for a past one)
 muster report
 ```
@@ -191,6 +197,45 @@ memory, so chunking bounds read buffers rather than the final frame — are
 in [docs/PERFORMANCE.md](docs/PERFORMANCE.md); rerun `scripts/bench.py` on
 your own hardware rather than trusting ours.
 
+## Publishing
+
+`muster publish [target]` sends the latest governed dataset to a target
+configured under `targets:` in muster.yaml — a SQLite file, a PostgreSQL
+table, a generic REST endpoint, or Salesforce (upsert on an External ID
+field, with your own field mapping). Full configuration examples live in
+[docs/CONNECTORS.md](docs/CONNECTORS.md).
+
+```yaml
+targets:
+  warehouse:
+    type: sqlite
+    path: warehouse.db
+    table: receivals
+```
+
+Publishing applies the CIA triad explicitly:
+
+- **Confidentiality** — secrets never live in configuration, logs or
+  output. Targets name environment variables (or use the OS keyring via the
+  optional `keyring` library), unknown keys in a target section are
+  rejected at load time, and every resolved secret is redacted from all
+  output.
+- **Integrity** — the dataset must hash to what the latest run's manifest
+  recorded before anything is sent, and every publish (including failed and
+  forced ones) appends to the tamper-evident manifest chain: target, row
+  counts, duration, outcome.
+- **Availability** — network targets retry transient failures with
+  exponential backoff and jitter, honour `Retry-After` on 429, carry
+  timeouts everywhere, and write idempotently (upserts on key columns, so a
+  retried publish converges instead of duplicating).
+
+A run that recorded error-severity exceptions is refused — an incomplete
+dataset should not propagate downstream — unless you pass `--force`, which
+is recorded loudly in the manifest chain. `--dry-run` prints exactly what
+would happen and writes nothing. Per-record failures (for example
+Salesforce error codes) land in `publish-exceptions.csv`, and the publish
+exits with code 2 so automation notices.
+
 ## Report
 
 Every run writes `report.html` — one self-contained file, no external
@@ -205,11 +250,14 @@ readable by non-technical reviewers and printable.
 
 Every run writes `runs/<timestamp>/manifest.json` recording the SHA-256 of
 the configuration, of every input file and of every output, plus row and
-exception counts and duration. Each manifest embeds the SHA-256 of the
-previous run's manifest, forming a tamper-evident hash chain: altering any
-historic manifest breaks verification of every manifest after it. This is
-the integrity leg of the CIA triad — the lineage of the governed dataset can
-be checked, not merely trusted.
+exception counts and duration. Every publish appends its own manifest to
+the same chain, recording the target, destination, source run, row counts
+and outcome — including refusals overridden with `--force`. Each manifest
+embeds the SHA-256 of the previous manifest, forming a tamper-evident hash
+chain: altering any historic manifest breaks verification of every manifest
+after it. This is the integrity leg of the CIA triad — the lineage of the
+governed dataset, and of everywhere it was sent, can be checked, not merely
+trusted.
 
 ## Licence
 
