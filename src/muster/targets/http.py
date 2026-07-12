@@ -16,6 +16,7 @@ import random
 import time
 import urllib.error
 import urllib.request
+from typing import Any
 
 from muster.credentials import redact_text
 from muster.targets.base import TargetError
@@ -29,14 +30,17 @@ _MAX_RETRY_AFTER_SECONDS = 120.0
 _sleep = time.sleep
 
 
-def _open(request: urllib.request.Request, timeout: int):  # patched in tests
-    return urllib.request.urlopen(request, timeout=timeout)  # noqa: S310 — scheme validated in config
+def _open(request: urllib.request.Request, timeout: int) -> Any:  # patched in tests
+    # Every URL reaching here is constrained to http(s) by the target config
+    # models (url/login_url validators, the instance_url https check).
+    return urllib.request.urlopen(request, timeout=timeout)  # nosec B310
 
 
 def _backoff(attempt: int) -> float:
     """Exponential backoff with jitter: half fixed, half random."""
-    base = min(0.5 * (2**attempt), _MAX_BACKOFF_SECONDS)
-    return base / 2 + random.uniform(0, base / 2)
+    base: float = min(0.5 * (2**attempt), _MAX_BACKOFF_SECONDS)
+    # Jitter spreads retries out; it is not security material.
+    return base / 2 + random.uniform(0, base / 2)  # nosec B311
 
 
 def _retry_after(exc: urllib.error.HTTPError) -> float | None:
@@ -94,8 +98,8 @@ def request_json(
             detail = ""
             try:
                 detail = exc.read().decode("utf-8", errors="replace")[:300]
-            except Exception:  # noqa: BLE001 — the status alone still tells the story
-                pass
+            except Exception:  # the status alone still tells the story
+                detail = ""
             raise TargetError(
                 f"{description} failed with HTTP {status}"
                 + (f" after {attempt} retr{'y' if attempt == 1 else 'ies'}" if transient else "")

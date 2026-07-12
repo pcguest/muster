@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import datetime as dt
 from abc import ABC, abstractmethod
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
-from typing import Iterator, Sequence
 
 import polars as pl
 

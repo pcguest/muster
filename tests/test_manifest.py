@@ -1,7 +1,7 @@
 """Unit tests for the tamper-evident manifest chain."""
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -35,7 +35,7 @@ def _write_run(tmp_path: Path, started: datetime, rows: int) -> Path:
 
 
 def test_manifest_records_hashes_and_totals(tmp_path):
-    started = datetime(2026, 7, 11, 9, 0, 0, tzinfo=timezone.utc)
+    started = datetime(2026, 7, 11, 9, 0, 0, tzinfo=UTC)
     path = _write_run(tmp_path, started, rows=4)
     manifest = json.loads(path.read_text(encoding="utf-8"))
     assert manifest["run_id"] == "20260711T090000Z"
@@ -47,7 +47,7 @@ def test_manifest_records_hashes_and_totals(tmp_path):
 
 
 def test_chain_links_and_verifies(tmp_path):
-    started = datetime(2026, 7, 11, 9, 0, 0, tzinfo=timezone.utc)
+    started = datetime(2026, 7, 11, 9, 0, 0, tzinfo=UTC)
     first = _write_run(tmp_path, started, rows=4)
     second = _write_run(tmp_path, started + timedelta(minutes=5), rows=5)
     manifest = json.loads(second.read_text(encoding="utf-8"))
@@ -59,7 +59,7 @@ def test_chain_links_and_verifies(tmp_path):
 
 
 def test_tampered_manifest_breaks_the_chain(tmp_path):
-    started = datetime(2026, 7, 11, 9, 0, 0, tzinfo=timezone.utc)
+    started = datetime(2026, 7, 11, 9, 0, 0, tzinfo=UTC)
     first = _write_run(tmp_path, started, rows=4)
     _write_run(tmp_path, started + timedelta(minutes=5), rows=5)
     doctored = json.loads(first.read_text(encoding="utf-8"))
@@ -70,7 +70,7 @@ def test_tampered_manifest_breaks_the_chain(tmp_path):
 
 
 def test_same_second_runs_get_distinct_directories(tmp_path):
-    started = datetime(2026, 7, 11, 9, 0, 0, tzinfo=timezone.utc)
+    started = datetime(2026, 7, 11, 9, 0, 0, tzinfo=UTC)
     _write_run(tmp_path, started, rows=1)
     second = _write_run(tmp_path, started, rows=2)
     assert second.parent.name == "20260711T090000Z-2"

@@ -15,7 +15,6 @@ import pytest
 import muster.targets.http as http_module
 from muster.config import RestTarget
 from muster.credentials import clear_registered_secrets
-from muster.targets.base import TargetError
 from muster.targets.rest import RestRuntime
 
 

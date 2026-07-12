@@ -11,7 +11,7 @@ import logging
 import re
 from datetime import date, datetime
 from pathlib import Path
-from typing import Annotated, Literal, Union
+from typing import Annotated, Literal
 
 import yaml
 from pydantic import (
@@ -19,6 +19,7 @@ from pydantic import (
     ConfigDict,
     Field,
     ValidationError,
+    ValidationInfo,
     field_validator,
     model_validator,
 )
@@ -79,7 +80,7 @@ class AllowedValuesRule(BaseModel):
 
 
 FieldRule = Annotated[
-    Union[RangeRule, RegexRule, AllowedValuesRule], Field(discriminator="rule")
+    RangeRule | RegexRule | AllowedValuesRule, Field(discriminator="rule")
 ]
 
 
@@ -201,8 +202,8 @@ class TargetBase(BaseModel):
         check_fields=False,
     )
     @classmethod
-    def _env_fields_name_variables(cls, value: object, info) -> object:
-        if info.field_name.endswith("_env"):
+    def _env_fields_name_variables(cls, value: object, info: ValidationInfo) -> object:
+        if info.field_name and info.field_name.endswith("_env"):
             if not isinstance(value, str) or not ENV_NAME_RE.match(value):
                 raise ValueError(
                     f"{info.field_name} must name an environment variable "
@@ -286,7 +287,7 @@ class SalesforceTarget(TargetBase):
 
 
 TargetConfig = Annotated[
-    Union[SqliteTarget, PostgresTarget, RestTarget, SalesforceTarget],
+    SqliteTarget | PostgresTarget | RestTarget | SalesforceTarget,
     Field(discriminator="type"),
 ]
 
@@ -361,16 +362,16 @@ class Config(BaseModel):
         for key in self.validation.keys:
             if key not in names:
                 raise ValueError(f"validation key '{key}' is not a declared field")
-        for rule in self.validation.cross_field:
-            for name in (rule.field, rule.other):
+        for cross in self.validation.cross_field:
+            for name in (cross.field, cross.other):
                 if name not in names:
                     raise ValueError(f"cross-field rule refers to unknown field '{name}'")
-            left, right = names[rule.field].type, names[rule.other].type
+            left, right = names[cross.field].type, names[cross.other].type
             comparable = left == right or {left, right} <= _NUMERIC_TYPES
             if not comparable:
                 raise ValueError(
-                    f"cross-field rule cannot compare {left} '{rule.field}' "
-                    f"with {right} '{rule.other}'"
+                    f"cross-field rule cannot compare {left} '{cross.field}' "
+                    f"with {right} '{cross.other}'"
                 )
         for target_name, target in self.targets.items():
             if not _TARGET_NAME_RE.match(target_name):

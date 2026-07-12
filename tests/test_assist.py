@@ -7,7 +7,6 @@ person accepts it.
 """
 
 import json
-from pathlib import Path
 
 import polars as pl
 import pytest

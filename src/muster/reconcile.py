@@ -12,9 +12,9 @@ source file wins) or ``priority_list`` (earliest listed file wins). The
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Mapping, Sequence
 
 import polars as pl
 

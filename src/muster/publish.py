@@ -21,9 +21,11 @@ the dataset, in the same schema as run exceptions.
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import polars as pl
 
@@ -36,7 +38,7 @@ from muster.manifest import (
     write_publish_manifest,
 )
 from muster.records import ExceptionRecord, write_exceptions
-from muster.targets import Target, TargetError, build_target
+from muster.targets import RecordFailure, Target, TargetError, build_target
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +95,7 @@ def select_target(config: Config, name: str | None) -> tuple[str, TargetConfig]:
 
 def _load_governed_dataset(
     config: Config, root: Path
-) -> tuple[pl.DataFrame, dict, int]:
+) -> tuple[pl.DataFrame, dict[str, Any], int]:
     """The latest run's dataset, verified against its manifest.
 
     Returns the frame, the run manifest, and the run's error count.
@@ -122,7 +124,7 @@ def _load_governed_dataset(
 
 
 def _failure_records(
-    report: PublishReport, target: Target, failures
+    report: PublishReport, target: Target, failures: Sequence[RecordFailure]
 ) -> list[ExceptionRecord]:
     key_column = ", ".join(target.keys) if target.keys else None
     return [
@@ -178,16 +180,16 @@ def publish_dataset(
         logger.info("dry run target=%s rows=%d — nothing written", name, frame.height)
         return report
 
-    started_at = datetime.now(timezone.utc)
+    started_at = datetime.now(UTC)
     try:
         outcome = target.publish(frame)
     except (TargetError, SecretError) as exc:
-        finished_at = datetime.now(timezone.utc)
+        finished_at = datetime.now(UTC)
         report.outcome = "failed"
         report.duration_seconds = (finished_at - started_at).total_seconds()
         report.manifest_path = _append_manifest(root, report, started_at, finished_at)
         raise PublishError(f"publish to target '{name}' failed: {exc}") from exc
-    finished_at = datetime.now(timezone.utc)
+    finished_at = datetime.now(UTC)
 
     report.rows_sent = outcome.rows_sent
     report.rows_failed = len(outcome.failures)

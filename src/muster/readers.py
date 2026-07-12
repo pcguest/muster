@@ -17,8 +17,8 @@ bounds memory rather than re-reading cost.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
 
 import fastexcel
 import polars as pl

@@ -11,10 +11,10 @@ never drops data without a written exception.
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Mapping
 
 import polars as pl
 
@@ -288,7 +288,7 @@ def run_pipeline(
     ``accepted`` holds human-approved assisted mappings (normalised heading
     to canonical field) from the mapping review file.
     """
-    started_at = datetime.now(timezone.utc)
+    started_at = datetime.now(UTC)
     root = root.resolve()
     files, exceptions = discover_sources(config, root)
     if not files and not exceptions:
@@ -356,7 +356,7 @@ def run_pipeline(
         generated_at=started_at.isoformat(timespec="seconds"),
         config_file=config_path.name,
         config_sha256=sha256_file(config_path),
-        duration_seconds=(datetime.now(timezone.utc) - started_at).total_seconds(),
+        duration_seconds=(datetime.now(UTC) - started_at).total_seconds(),
         rows_in=rows_in,
         rows_published=rows_published,
         rows_held=rows_held,
@@ -368,7 +368,7 @@ def run_pipeline(
     manifest_path = write_manifest(
         run_dir,
         started_at=started_at,
-        finished_at=datetime.now(timezone.utc),
+        finished_at=datetime.now(UTC),
         config_path=config_path,
         inputs=inputs,
         outputs={

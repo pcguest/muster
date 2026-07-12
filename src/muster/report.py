@@ -14,10 +14,10 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from html import escape
 from pathlib import Path
-from typing import Mapping, Sequence
 
 import polars as pl
 
@@ -348,6 +348,12 @@ def _kpi(label: str, value: object, tone: str) -> str:
     )
 
 
+def _count_cell(count: int, severity: str) -> str:
+    if not count:
+        return '<td class="num">0</td>'
+    return f'<td class="num"><span class="sev-{severity}">{count}</span></td>'
+
+
 def _mapping_tag(decision: MappingDecision) -> str:
     if decision.target is None:
         return '<span class="tag unmapped">unmapped</span>'
@@ -387,9 +393,12 @@ def render_report(data: RunReportData) -> str:
         for s in data.sources
     )
 
+    # Plain string concatenation here: nested quotes and escapes inside
+    # f-strings are Python 3.12+ syntax, and Muster supports 3.11.
+    empty_cell = '<span class="empty">—</span>'
     mapping_rows = "\n".join(
         f"<tr><td>{escape(m.file)}</td><td>{escape(m.source_column)}</td>"
-        f"<td>{escape(m.target) if m.target else '<span class=\"empty\">—</span>'}</td>"
+        f"<td>{escape(m.target) if m.target else empty_cell}</td>"
         f"<td>{_mapping_tag(m)}</td>"
         f"<td>{escape(m.reason or '')}</td></tr>"
         for m in data.mappings
@@ -397,8 +406,7 @@ def render_report(data: RunReportData) -> str:
 
     kind_rows = "\n".join(
         f"<tr><td>{escape(k.kind)}</td>"
-        f"<td class='num'>{f'<span class=\"sev-error\">{k.errors}</span>' if k.errors else 0}</td>"
-        f"<td class='num'>{f'<span class=\"sev-warning\">{k.warnings}</span>' if k.warnings else 0}</td></tr>"
+        f"{_count_cell(k.errors, 'error')}{_count_cell(k.warnings, 'warning')}</tr>"
         for k in data.exception_kinds
     ) or '<tr><td colspan="3" class="empty">No exceptions — a clean run.</td></tr>'
 

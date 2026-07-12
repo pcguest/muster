@@ -17,9 +17,10 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from datetime import datetime, timezone
+from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Any
 
 from muster import __version__
 
@@ -57,7 +58,9 @@ def latest_run_directory(runs_dir: Path) -> Path | None:
     return directories[-1] if directories else None
 
 
-def latest_manifest_of_kind(runs_dir: Path, kind: str) -> tuple[Path, dict] | None:
+def latest_manifest_of_kind(
+    runs_dir: Path, kind: str
+) -> tuple[Path, dict[str, Any]] | None:
     """The newest manifest of one kind (``run`` or ``publish``), parsed.
 
     Publish manifests share the chain with pipeline-run manifests, so the
@@ -74,7 +77,7 @@ def latest_manifest_of_kind(runs_dir: Path, kind: str) -> tuple[Path, dict] | No
 
 def create_run_directory(runs_dir: Path, started_at: datetime) -> Path:
     """Create a fresh, uniquely named directory for one run's artefacts."""
-    stamp = started_at.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    stamp = started_at.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
     candidate = runs_dir / stamp
     suffix = 1
     while candidate.exists():
@@ -105,8 +108,8 @@ def write_manifest(
         "run_id": run_dir.name,
         "kind": "run",
         "muster_version": __version__,
-        "started_at": started_at.astimezone(timezone.utc).isoformat(),
-        "finished_at": finished_at.astimezone(timezone.utc).isoformat(),
+        "started_at": started_at.astimezone(UTC).isoformat(),
+        "finished_at": finished_at.astimezone(UTC).isoformat(),
         "duration_seconds": round((finished_at - started_at).total_seconds(), 3),
         "config": {"file": config_path.name, "sha256": sha256_file(config_path)},
         "inputs": [
@@ -146,15 +149,15 @@ def write_publish_manifest(
         "run_id": run_dir.name,
         "kind": "publish",
         "muster_version": __version__,
-        "started_at": started_at.astimezone(timezone.utc).isoformat(),
-        "finished_at": finished_at.astimezone(timezone.utc).isoformat(),
+        "started_at": started_at.astimezone(UTC).isoformat(),
+        "finished_at": finished_at.astimezone(UTC).isoformat(),
         "duration_seconds": round((finished_at - started_at).total_seconds(), 3),
         "publish": dict(publish),
     }
     return _write_chained(run_dir, manifest)
 
 
-def _write_chained(run_dir: Path, manifest: dict) -> Path:
+def _write_chained(run_dir: Path, manifest: dict[str, Any]) -> Path:
     """Write a manifest with the link to its predecessor, completing the chain."""
     previous = None
     latest = latest_run_directory(run_dir.parent)

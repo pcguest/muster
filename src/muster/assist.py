@@ -31,9 +31,10 @@ import logging
 import os
 import re
 import urllib.request
-from datetime import datetime, timezone
+from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal, Mapping, Sequence
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field, ValidationError
@@ -98,7 +99,7 @@ def redact(value: str, redaction: RedactionConfig) -> str:
 
 def build_evidence(
     unmapped_samples: Mapping[str, Sequence[str]], assist: AssistConfig
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """Redacted, sendable evidence for each unmapped column heading."""
     evidence = []
     for column, raw_samples in sorted(unmapped_samples.items()):
@@ -117,7 +118,7 @@ def build_evidence(
     return evidence
 
 
-def _prompt(evidence: list[dict], config: Config) -> str:
+def _prompt(evidence: list[dict[str, Any]], config: Config) -> str:
     fields = [
         {"name": spec.name, "type": spec.type, "synonyms": spec.synonyms}
         for spec in config.fields
@@ -135,7 +136,9 @@ def _prompt(evidence: list[dict], config: Config) -> str:
     )
 
 
-def _post_json(url: str, headers: dict, body: dict, timeout: int) -> dict:
+def _post_json(
+    url: str, headers: dict[str, str], body: dict[str, Any], timeout: int
+) -> dict[str, Any]:
     """POST a JSON body and return the JSON response. Patched in tests."""
     request = urllib.request.Request(
         url,
@@ -143,8 +146,12 @@ def _post_json(url: str, headers: dict, body: dict, timeout: int) -> dict:
         headers={"Content-Type": "application/json", **headers},
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 — scheme validated in config
-        return json.loads(response.read().decode("utf-8"))
+    # The base URL is constrained to http(s) by AssistConfig's validator.
+    with urllib.request.urlopen(request, timeout=timeout) as response:  # nosec B310
+        reply = json.loads(response.read().decode("utf-8"))
+    if not isinstance(reply, dict):
+        raise AssistError("the provider reply was not a JSON object")
+    return reply
 
 
 def _request_completion(prompt: str, assist: AssistConfig, api_key: str) -> str:
@@ -177,7 +184,7 @@ def _request_completion(prompt: str, assist: AssistConfig, api_key: str) -> str:
     return choices[0].get("message", {}).get("content", "") or ""
 
 
-def _extract_json_array(text: str) -> list:
+def _extract_json_array(text: str) -> list[Any]:
     """Pull the JSON array out of a model reply; the reply is untrusted."""
     stripped = text.strip()
     if stripped.startswith("```"):
@@ -187,7 +194,9 @@ def _extract_json_array(text: str) -> list:
     except json.JSONDecodeError:
         start, end = stripped.find("["), stripped.rfind("]")
         if start == -1 or end <= start:
-            raise AssistError("the model reply held no JSON array of proposals")
+            raise AssistError(
+                "the model reply held no JSON array of proposals"
+            ) from None
         try:
             parsed = json.loads(stripped[start : end + 1])
         except json.JSONDecodeError as exc:
@@ -198,7 +207,7 @@ def _extract_json_array(text: str) -> list:
 
 
 def _validate_proposals(
-    raw: list, evidence: list[dict], config: Config
+    raw: list[Any], evidence: list[dict[str, Any]], config: Config
 ) -> list[MappingProposal]:
     known_columns = {e["column"]: e for e in evidence}
     known_fields = {spec.name for spec in config.fields}
@@ -209,11 +218,13 @@ def _validate_proposals(
             logger.warning("dropped non-object proposal from model reply")
             continue
         column = item.get("column")
-        if column not in known_columns or column in seen:
+        if not isinstance(column, str) or column not in known_columns or column in seen:
             logger.warning("dropped proposal for unknown or repeated column %r", column)
             continue
         target = item.get("target")
-        if target is not None and target not in known_fields:
+        if target is not None and (
+            not isinstance(target, str) or target not in known_fields
+        ):
             logger.warning(
                 "dropped proposal mapping %r to unknown field %r", column, target
             )
@@ -265,7 +276,7 @@ def propose_mappings(
         config.assist.model,
     )
     return ReviewFile(
-        generated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        generated_at=datetime.now(UTC).isoformat(timespec="seconds"),
         provider=config.assist.provider,
         model=config.assist.model,
         proposals=proposals,

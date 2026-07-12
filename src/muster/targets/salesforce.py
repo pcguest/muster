@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 import logging
 import urllib.parse
-from typing import Sequence
+from collections.abc import Sequence
 
 import polars as pl
 
@@ -83,9 +83,11 @@ class SalesforceRuntime(Target):
         token = str(reply["access_token"])
         register_secret(token)
         instance = str(reply.get("instance_url") or "").rstrip("/")
-        if not instance:
+        if not instance.startswith("https://"):
+            # The reply is only semi-trusted; never send the bearer token
+            # anywhere but an https Salesforce instance.
             raise TargetError(
-                f"salesforce token reply for '{self.name}' held no instance_url"
+                f"salesforce token reply for '{self.name}' held no https instance_url"
             )
         return token, instance
 
@@ -156,7 +158,7 @@ class SalesforceRuntime(Target):
                     f"salesforce reply for '{self.name}' did not report one "
                     f"result per record ({len(batch)} sent)"
                 )
-            for record, result in zip(batch, reply):
+            for record, result in zip(batch, reply, strict=True):
                 if isinstance(result, dict) and result.get("success"):
                     outcome.rows_sent += 1
                     continue

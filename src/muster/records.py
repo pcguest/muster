@@ -13,9 +13,10 @@ count them without parsing reasons.
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Literal, Sequence
+from typing import Literal
 
 import polars as pl
 

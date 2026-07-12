@@ -19,8 +19,8 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Mapping, Sequence
 
 from rapidfuzz import fuzz
 

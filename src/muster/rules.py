@@ -10,7 +10,7 @@ speaks about emptiness.
 from __future__ import annotations
 
 import logging
-from typing import Callable, Sequence
+from collections.abc import Callable, Sequence
 
 import polars as pl
 
@@ -44,7 +44,7 @@ def _violations(
     kind: str,
     severity: str,
     reason: str,
-    value_of: Callable[[dict], str | None] | None = None,
+    value_of: Callable[[dict[str, object]], str | None] | None = None,
 ) -> list[ExceptionRecord]:
     """Turn a boolean expression into one exception record per offending row."""
     offending = frame.filter(mask)
@@ -132,23 +132,27 @@ def validate_frame(frame: pl.DataFrame, config: Config) -> list[ExceptionRecord]
                 _violations(frame, mask, spec.name, kind, rule.severity, reason)
             )
 
-    for rule in config.validation.cross_field:
-        left, right = pl.col(rule.field), pl.col(rule.other)
-        holds = _OPERATORS[rule.operator](left, right)
+    for cross in config.validation.cross_field:
+        left, right = pl.col(cross.field), pl.col(cross.other)
+        holds = _OPERATORS[cross.operator](left, right)
         mask = left.is_not_null() & right.is_not_null() & ~holds
-        reason = f"'{rule.field}' must be {rule.operator} '{rule.other}'"
+        reason = f"'{cross.field}' must be {cross.operator} '{cross.other}'"
+
+        def _pair_text(row: dict[str, object], r: CrossFieldRule = cross) -> str:
+            return (
+                f"{r.field}={_cell_text(row[r.field])}, "
+                f"{r.other}={_cell_text(row[r.other])}"
+            )
+
         records.extend(
             _violations(
                 frame,
                 mask,
-                rule.field,
+                cross.field,
                 kind="rule_cross_field",
-                severity=rule.severity,
+                severity=cross.severity,
                 reason=reason,
-                value_of=lambda row, r=rule: (
-                    f"{r.field}={_cell_text(row[r.field])}, "
-                    f"{r.other}={_cell_text(row[r.other])}"
-                ),
+                value_of=_pair_text,
             )
         )
 

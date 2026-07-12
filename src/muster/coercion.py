@@ -20,7 +20,7 @@ overlap an all-numeric one.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import date, datetime
 
 import polars as pl
 
@@ -139,6 +139,7 @@ def _apply_month_name_fallback(
     if unresolved.is_empty():
         return coerced
     parsed = [_month_name_fallback(cleaned[i]) for i in unresolved.to_list()]
+    values: list[date | None] | list[datetime | None]
     if field_type == "date":
         values = [p.date() if p is not None else None for p in parsed]
     else:

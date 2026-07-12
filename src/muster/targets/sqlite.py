@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
 import polars as pl
 
@@ -60,10 +60,12 @@ class SqliteRuntime(Target):
             if self.keys
             else ""
         )
-        create = f"CREATE TABLE IF NOT EXISTS {table} ({', '.join(columns)}{constraint})"
+        # Identifiers are quoted via quote_ident and come from the user's own
+        # configuration; every value is parameterised.
+        create = f"CREATE TABLE IF NOT EXISTS {table} ({', '.join(columns)}{constraint})"  # nosec B608
         names = ", ".join(quote_ident(name) for name in frame.columns)
         placeholders = ", ".join("?" for _ in frame.columns)
-        insert = f"INSERT INTO {table} ({names}) VALUES ({placeholders})"
+        insert = f"INSERT INTO {table} ({names}) VALUES ({placeholders})"  # nosec B608
         if self.keys:
             conflict = ", ".join(quote_ident(k) for k in self.keys)
             updates = [
@@ -71,7 +73,10 @@ class SqliteRuntime(Target):
                 for name in frame.columns
                 if name not in self.keys
             ]
-            action = f"DO UPDATE SET {', '.join(updates)}" if updates else "DO NOTHING"
+            # Identifiers are quoted via quote_ident; values are parameterised.
+            action = (
+                f"DO UPDATE SET {', '.join(updates)}" if updates else "DO NOTHING"  # nosec B608
+            )
             insert += f" ON CONFLICT ({conflict}) {action}"
         return create, insert
 
@@ -106,7 +111,7 @@ class SqliteRuntime(Target):
             with connection:
                 connection.execute(create)
                 if not self.keys:
-                    connection.execute(f"DELETE FROM {quote_ident(self.spec.table)}")
+                    connection.execute(f"DELETE FROM {quote_ident(self.spec.table)}")  # nosec B608
                 connection.executemany(insert, rows)
         except sqlite3.Error as exc:
             raise TargetError(

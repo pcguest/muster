@@ -6,7 +6,6 @@ error reporting with Salesforce error codes, and that every credential
 stays out of output and manifests.
 """
 
-import email.message
 import json
 import urllib.parse
 
