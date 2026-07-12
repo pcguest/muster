@@ -60,6 +60,16 @@ muster publish warehouse --dry-run
 
 # Re-render the HTML report for the latest run (or --run <id> for a past one)
 muster report
+
+# Serve the local dashboard: runs, trends, exceptions browser, mapping
+# review and the report, behind a login token (see below)
+muster serve
+
+# Run the pipeline on a schedule via the bundled daemon — or print the
+# equivalent systemd unit and cron line and use the OS scheduler instead
+muster schedule "*/15 * * * *"
+muster daemon start
+muster schedule --print
 ```
 
 Add `--verbose` before any command for detailed logging, e.g.
@@ -235,6 +245,36 @@ is recorded loudly in the manifest chain. `--dry-run` prints exactly what
 would happen and writes nothing. Per-record failures (for example
 Salesforce error codes) land in `publish-exceptions.csv`, and the publish
 exits with code 2 so automation notices.
+
+## Dashboard
+
+`muster serve` puts the whole workflow in a browser, rendered by the
+server with one hand-written stylesheet — no CDNs, no build step, nothing
+fetched from anywhere. The dashboard shows the latest run, per-field
+quality and trends across runs (read from the manifests); the exceptions
+browser filters by severity, kind and file, and lets you resolve or
+dismiss each exception with a note — decisions append to an audit log
+(`runs/resolutions.jsonl`) and never rewrite the run's own records; the
+mapping review page is the `muster review` flow with buttons; a run can be
+triggered from the header; and the run report is served inline.
+
+It is local-first and single-user: bound to 127.0.0.1 unless you pass an
+explicit `--host` (with a printed warning — prefer an SSH tunnel), behind
+a login token generated on first serve and stored in the OS keyring, with
+strict-SameSite HttpOnly sessions, CSRF tokens on every form, rate-limited
+mutating routes and a strict Content-Security-Policy. The threat model is
+written out in [docs/SECURITY.md](docs/SECURITY.md).
+
+## Scheduling
+
+`muster schedule "*/15 * * * *"` stores a cron expression beside
+muster.yaml, and `muster daemon start` runs the pipeline on it — a small
+daemon with a PID file and a size-rotated `runs/daemon.log`, running each
+pipeline in a subprocess so a failing run cannot take the daemon down.
+Non-zero exits are recorded, and notified to a webhook if
+`MUSTER_WEBHOOK_URL` is set. Where a real scheduler is available, prefer
+it: `muster schedule --print` emits a ready-to-use systemd unit and
+crontab line.
 
 ## Report
 
