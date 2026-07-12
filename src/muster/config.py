@@ -14,7 +14,16 @@ from pathlib import Path
 from typing import Annotated, Literal, Union
 
 import yaml
-from pydantic import BaseModel, Field, ValidationError, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
+
+from muster.credentials import ENV_NAME_RE
 
 logger = logging.getLogger(__name__)
 
@@ -172,6 +181,118 @@ class AssistConfig(BaseModel):
         return "https://api.anthropic.com"
 
 
+class TargetBase(BaseModel):
+    """Common shape of every publish target.
+
+    Targets forbid unknown keys so a credential pasted into muster.yaml is
+    rejected at load time instead of silently sitting in a config file:
+    secrets are named by environment variables (``*_env`` fields) and
+    resolved from the environment or the OS keyring at publish time.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # Key columns used for idempotent upserts; defaults to validation.keys.
+    key_columns: list[str] = Field(default_factory=list)
+
+    @field_validator(
+        "*",
+        mode="after",
+        check_fields=False,
+    )
+    @classmethod
+    def _env_fields_name_variables(cls, value: object, info) -> object:
+        if info.field_name.endswith("_env"):
+            if not isinstance(value, str) or not ENV_NAME_RE.match(value):
+                raise ValueError(
+                    f"{info.field_name} must name an environment variable "
+                    "(upper-case letters, digits and underscores) — never put "
+                    "the secret itself in the configuration file"
+                )
+        return value
+
+
+class SqliteTarget(TargetBase):
+    """Publish into a SQLite database file (Python standard library)."""
+
+    type: Literal["sqlite"]
+    path: Path = Path("published.db")
+    table: str = Field(min_length=1)
+
+
+class PostgresTarget(TargetBase):
+    """Publish into PostgreSQL via psycopg 3, transactionally."""
+
+    type: Literal["postgres"]
+    table: str = Field(min_length=1)
+    # The connection string (which may embed a password) is a secret.
+    dsn_env: str = "MUSTER_PG_DSN"
+
+
+class RestTarget(TargetBase):
+    """POST the dataset in batches of JSON records to an HTTP endpoint."""
+
+    type: Literal["rest"]
+    url: str = Field(min_length=1)
+    auth: Literal["bearer", "api_key", "none"] = "bearer"
+    token_env: str = "MUSTER_REST_TOKEN"
+    api_key_header: str = "X-API-Key"
+    batch_size: int = Field(default=500, ge=1, le=10_000)
+    timeout_seconds: int = Field(default=30, ge=1, le=600)
+    max_retries: int = Field(default=5, ge=0, le=10)
+
+    @model_validator(mode="after")
+    def _url_is_http(self) -> RestTarget:
+        if not self.url.startswith(("https://", "http://")):
+            raise ValueError("rest target url must be an http(s) URL")
+        return self
+
+
+class SalesforceTarget(TargetBase):
+    """Upsert records into a Salesforce object via the REST API.
+
+    The object, the External ID field and the canonical-to-Salesforce field
+    map are user configuration — Muster cannot know an org's schema. Records
+    are sent through the sObject Collections endpoint in batches of up to
+    200, and per-record failures are recorded with Salesforce error codes.
+    """
+
+    type: Literal["salesforce"]
+    object: str = Field(min_length=1)
+    external_id_field: str = Field(min_length=1)
+    # canonical field name -> Salesforce API field name
+    field_map: dict[str, str] = Field(min_length=1)
+    login_url: str = "https://login.salesforce.com"
+    auth_flow: Literal["client_credentials", "username_password"] = "client_credentials"
+    api_version: str = Field(default="v62.0", pattern=r"^v\d+\.\d$")
+    batch_size: int = Field(default=200, ge=1, le=200)
+    timeout_seconds: int = Field(default=30, ge=1, le=600)
+    max_retries: int = Field(default=5, ge=0, le=10)
+    client_id_env: str = "MUSTER_SF_CLIENT_ID"
+    client_secret_env: str = "MUSTER_SF_CLIENT_SECRET"
+    username_env: str = "MUSTER_SF_USERNAME"
+    password_env: str = "MUSTER_SF_PASSWORD"
+
+    @model_validator(mode="after")
+    def _login_url_is_https(self) -> SalesforceTarget:
+        if not self.login_url.startswith(("https://", "http://")):
+            raise ValueError("salesforce login_url must be an http(s) URL")
+        if self.external_id_field not in self.field_map.values():
+            raise ValueError(
+                "field_map must map some canonical field onto the "
+                f"external_id_field '{self.external_id_field}' so records can be upserted"
+            )
+        return self
+
+
+TargetConfig = Annotated[
+    Union[SqliteTarget, PostgresTarget, RestTarget, SalesforceTarget],
+    Field(discriminator="type"),
+]
+
+_TARGET_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
+
+
 class LimitsConfig(BaseModel):
     """Safety limits applied to untrusted input."""
 
@@ -216,6 +337,7 @@ class Config(BaseModel):
     output: OutputConfig = Field(default_factory=OutputConfig)
     validation: ValidationConfig = Field(default_factory=ValidationConfig)
     assist: AssistConfig = Field(default_factory=AssistConfig)
+    targets: dict[str, TargetConfig] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _rules_fit_field_types(self) -> Config:
@@ -250,7 +372,28 @@ class Config(BaseModel):
                     f"cross-field rule cannot compare {left} '{rule.field}' "
                     f"with {right} '{rule.other}'"
                 )
+        for target_name, target in self.targets.items():
+            if not _TARGET_NAME_RE.match(target_name):
+                raise ValueError(
+                    f"target name '{target_name}' must start with a letter and use "
+                    "only letters, digits, hyphens and underscores"
+                )
+            for key in target.key_columns:
+                if key not in names:
+                    raise ValueError(
+                        f"target '{target_name}' key column '{key}' is not a declared field"
+                    )
+            if isinstance(target, SalesforceTarget):
+                for canonical in target.field_map:
+                    if canonical not in names:
+                        raise ValueError(
+                            f"target '{target_name}' maps unknown field '{canonical}'"
+                        )
         return self
+
+    def resolved_key_columns(self, target: TargetConfig) -> list[str]:
+        """A target's upsert keys: its own, or the dataset validation keys."""
+        return list(target.key_columns) or list(self.validation.keys)
 
 
 # Marks an unreviewed inference in a generated configuration; see scaffold.py.
@@ -407,4 +550,35 @@ assist:
 output:
   directory: output
   dataset_name: consolidated
+
+# Publish targets for 'muster publish <name>' — see docs/CONNECTORS.md.
+# Secrets NEVER live in this file: each target names environment variables
+# (or use the OS keyring: 'keyring set muster <NAME>'), and unknown keys are
+# rejected so a pasted credential fails loudly at load time. key_columns
+# defaults to validation.keys; upserts on those keys keep publishes
+# idempotent. Every target supports 'muster publish --dry-run'.
+# targets:
+#   warehouse:
+#     type: sqlite
+#     path: warehouse.db          # relative to this file
+#     table: customers
+#   analytics:
+#     type: postgres
+#     table: customers
+#     dsn_env: MUSTER_PG_DSN      # e.g. postgresql://user:pass@host/db
+#   ingest_api:
+#     type: rest
+#     url: https://example.com/api/ingest
+#     auth: bearer                # bearer | api_key | none
+#     token_env: MUSTER_REST_TOKEN
+#     batch_size: 500
+#   crm:
+#     type: salesforce
+#     object: Contact
+#     external_id_field: Customer_Id__c
+#     field_map:                  # canonical field -> Salesforce API name
+#       customer_id: Customer_Id__c
+#       full_name: LastName
+#     auth_flow: client_credentials
+#     login_url: https://login.salesforce.com
 """
