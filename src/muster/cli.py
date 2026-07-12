@@ -1,4 +1,5 @@
-"""Command-line interface: init, confirm, profile, run, review, publish and report."""
+"""Command-line interface: init, confirm, profile, run, demo, review,
+publish, report, schedule, daemon and serve."""
 
 import dataclasses
 import json
