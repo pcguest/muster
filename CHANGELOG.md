@@ -4,6 +4,35 @@ All notable changes to Muster are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and Muster
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] — 2026-07-13
+
+Web interface release: every existing operating capability now has a calm,
+coherent place in the local dashboard, with the complete demo ready for a
+live walkthrough.
+
+### Added
+
+- Dedicated read-only trends, remediation and publishing views. Trends show
+  quality, published and held counts across run manifests; publishing shows
+  configured targets, the latest publish outcome, recorded quality overrides,
+  and schedule/daemon status without resolving or exposing credentials.
+- A full report view inside the shared dashboard shell, with the standalone
+  self-contained report still available for sharing.
+- Explicit fresh-project, clean-run, in-progress, failed-action and malformed-
+  artefact states, plus route/render coverage for populated and empty pages.
+- A guided demo click-path in `docs/WORKFLOW.md`, including the held-row
+  correction and rerun arc.
+
+### Changed
+
+- Dashboard, exceptions, remediation, mapping review, trends, publishing and
+  report now share one active, keyboard-operable navigation header. Inputs are
+  labelled, focus is visible, statuses pair colour with text, and the strict
+  zero-JavaScript CSP remains unchanged.
+- `muster demo` now records a synthetic local SQLite publish, a weekday
+  schedule and an illustrative mapping-review fixture so `muster serve` opens
+  a complete interface immediately.
+
 ## [1.2.0] — 2026-07-13
 
 Exception remediation: corrected rows rejoin the governed dataset under
@@ -222,6 +251,7 @@ finishes the documentation, packaging and release engineering.
   `muster.yaml`; path confinement, file size limits and structured
   logging.
 
+[1.3.0]: https://github.com/pcguest/muster/releases/tag/v1.3.0
 [1.2.0]: https://github.com/pcguest/muster/releases/tag/v1.2.0
 [1.1.0]: https://github.com/pcguest/muster/releases/tag/v1.1.0
 [1.0.1]: https://github.com/pcguest/muster/releases/tag/v1.0.1
