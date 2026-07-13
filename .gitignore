@@ -18,5 +18,9 @@ dist/
 /muster.schedule
 .muster-token
 
+# Deployment secrets: copy deploy/example.env.template to deploy/muster.env
+# and keep the real file out of history.
+deploy/*.env
+
 # OS
 .DS_Store

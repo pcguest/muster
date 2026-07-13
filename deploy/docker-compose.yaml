@@ -1,0 +1,70 @@
+# A realistic Muster deployment: the scheduling daemon consolidating on a
+# timer over a mounted project directory, publishing to PostgreSQL.
+#
+# Layout expected next to this file:
+#   project/            the Muster project — muster.yaml, muster.schedule,
+#                       sources/, and the runs/ audit chain (back this up)
+#   muster.env          real secrets, copied from example.env.template —
+#                       gitignored, never committed
+#
+# Start with:  docker compose up -d
+
+services:
+  muster:
+    build:
+      context: ..
+    image: muster:1.1.0
+    # The foreground scheduler loop. The container's lifecycle is the
+    # process's lifecycle, so `restart` supervises it — no PID files.
+    command: ["daemon", "run", "--config", "/project/muster.yaml"]
+    # The image already runs as uid 10001; stated here so the compose file
+    # documents the identity the mounted volume must be writable by.
+    user: "10001:10001"
+    # Secrets come from the environment, never from muster.yaml. The real
+    # env file is gitignored; example.env.template lists every variable.
+    env_file: muster.env
+    environment:
+      # One JSON object per log line, so the platform's log driver and any
+      # SIEM behind it ingest without parsing rules.
+      MUSTER_LOG_FORMAT: json
+    volumes:
+      # The whole project travels together: configuration, sources, output
+      # and the tamper-evident runs/ chain. Keep it on storage you back up.
+      - ./project:/project
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # The image HEALTHCHECK probes `muster serve`; the daemon exposes no
+    # HTTP surface, so disable it rather than report a false unhealthy.
+    healthcheck:
+      disable: true
+    # The image is immutable at run time: only the mounted project and a
+    # scratch /tmp are writable.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16
+    # POSTGRES_USER, POSTGRES_PASSWORD and POSTGRES_DB come from the same
+    # env file, so the DSN Muster resolves always matches the database.
+    env_file: muster.env
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # No ports: published data is reachable only on the compose network.
+    # Expose it deliberately (ports: ["127.0.0.1:5432:5432"]) if you must
+    # reach it from the host.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  pgdata:
