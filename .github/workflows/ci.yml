@@ -20,6 +20,9 @@ jobs:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: pyproject.toml
+      # pip-audit audits the whole environment, pip included; a stale
+      # runner pip with known CVEs would fail the gate on its own.
+      - run: python -m pip install -U pip
       - run: python -m pip install -e '.[dev,keyring]'
       - run: ruff check src tests scripts
       - run: mypy
