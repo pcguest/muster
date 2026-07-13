@@ -134,10 +134,24 @@ the tool:
 units) drive `muster run` on a timer; exit codes 0/2/1 make failures loud
 in cron and CI.
 
+## Deployment
+
+Muster runs the same from a terminal, a container or a scheduler. The
+repository ships a multi-stage `Dockerfile` (non-root, wheel-only runtime,
+health-checked) and a commented compose example —
+[deploy/docker-compose.yaml](deploy/docker-compose.yaml) — running the
+daemon on a schedule with a PostgreSQL publish target and secrets injected
+from a gitignored env file. `muster serve` answers `/healthz` and
+`/readyz` for orchestrator probes, and `MUSTER_LOG_FORMAT=json` switches
+log lines to JSON for container platforms.
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) is the full playbook, including
+the parallel-run pilot pattern for earning trust before cut-over.
+
 ## Documentation
 
 - [docs/WORKFLOW.md](docs/WORKFLOW.md) — the workflow, start to finish
 - [docs/CONFIG.md](docs/CONFIG.md) — every configuration key, annotated
+- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — containers, scheduling, secrets and the pilot pattern
 - [docs/CONNECTORS.md](docs/CONNECTORS.md) — publish targets and the CIA security model
 - [docs/SECURITY.md](docs/SECURITY.md) — the threat model, stated plainly
 - [docs/PERFORMANCE.md](docs/PERFORMANCE.md) — how it stays fast, measured honestly
