@@ -3,13 +3,16 @@
 {% block heading %}dashboard{% endblock %}
 {% block content %}
 {% if report is none %}
-<div class="panel empty-state">
-  <p>No completed run yet. Press <strong>Run pipeline</strong> above, or run
-  <code>muster run</code> from the terminal, then refresh.</p>
-</div>
+<section aria-labelledby="fresh-project-heading">
+  <h2 id="fresh-project-heading">Ready for the first run</h2>
+  <div class="panel empty-state">
+    <p>No completed run yet. Use <strong>Run pipeline</strong> above, or run
+    <code>muster run</code> from the terminal.</p>
+  </div>
+</section>
 {% else %}
-<section>
-  <h2>Latest run — {{ report.run_id }}</h2>
+<section aria-labelledby="latest-run-heading">
+  <div class="section-heading"><h2 id="latest-run-heading">Latest run · {{ report.run_id }}</h2><a href="/report">Open full report</a></div>
   <div class="kpis">
     <div class="kpi plain"><div class="n">{{ report.rows_in }}</div><div class="l">rows in</div></div>
     <div class="kpi good"><div class="n">{{ report.rows_published }}</div><div class="l">rows published</div></div>
@@ -22,13 +25,11 @@
   <p class="meta">{{ report.files_read }} file(s) in {{ '%.2f' | format(report.duration_seconds) }}s
   · config <code>{{ report.config_file }}</code>
   (sha256 <code>{{ report.config_sha256[:12] }}…</code>)
-  {% if run_state.last_exit is not none %}
-  · last browser-triggered run exited {{ run_state.last_exit }}
-  {% endif %}</p>
+  </p>
 </section>
 
-<section>
-  <h2>Field quality — governed dataset</h2>
+<section aria-labelledby="field-quality-heading">
+  <h2 id="field-quality-heading">Field quality · governed dataset</h2>
   <div class="panel">
   <table>
     <tr><th>Field</th><th>Type</th><th>Required</th>
@@ -38,7 +39,7 @@
       <td>{{ f.name }}</td><td>{{ f.type }}</td><td>{{ 'yes' if f.required else '' }}</td>
       {% for value in (f.completeness_pct, f.validity_pct) %}
       {% if value is none %}<td class="num">—</td>{% else %}
-      <td class="num"><span class="bar"><i class="{{ 'good-fill' if value >= 95 else 'warn-fill' if value >= 80 else 'bad-fill' }}" style="width:{{ value }}%"></i></span>{{ value }}%</td>
+      <td class="num"><progress class="quality {{ 'good-fill' if value >= 95 else 'warn-fill' if value >= 80 else 'bad-fill' }}" value="{{ value }}" max="100" aria-label="{{ value }} percent"></progress>{{ value }}%</td>
       {% endif %}
       {% endfor %}
     </tr>
@@ -49,19 +50,19 @@
 {% endif %}
 
 <section>
-  <h2>Trends across runs</h2>
+  <div class="section-heading"><h2>Recent runs</h2><a href="/trends">View all trends</a></div>
   <div class="panel">
   {% if trends %}
   <table>
     <tr><th>Run</th><th>Finished</th><th class="num">Rows in</th>
         <th class="num">Published</th><th class="num">Errors</th>
         <th class="num">Warnings</th><th class="num">Seconds</th></tr>
-    {% for t in trends %}
+    {% for t in trends[-5:] %}
     <tr>
       <td><code>{{ t.run_id }}</code></td>
       <td class="dim">{{ t.finished_at[:16].replace('T', ' ') }}</td>
       <td class="num">{{ t.rows_in }}</td>
-      <td class="num"><span class="bar"><i class="good-fill" style="width:{{ (100 * t.rows_published / peak_rows) | round(1) }}%"></i></span>{{ t.rows_published }}</td>
+      <td class="num"><progress class="quality good-fill" value="{{ t.rows_published }}" max="{{ peak_rows }}" aria-label="{{ t.rows_published }} rows published"></progress>{{ t.rows_published }}</td>
       <td class="num">{% if t.errors %}<span class="sev-error">{{ t.errors }}</span>{% else %}0{% endif %}</td>
       <td class="num">{% if t.warnings %}<span class="sev-warning">{{ t.warnings }}</span>{% else %}0{% endif %}</td>
       <td class="num">{{ '%.2f' | format(t.duration_seconds) }}</td>
@@ -69,7 +70,7 @@
     {% endfor %}
   </table>
   {% else %}
-  <p class="empty">No runs recorded yet.</p>
+  <p class="empty-state-copy">No run history yet. The first completed run will establish the baseline.</p>
   {% endif %}
   </div>
 </section>

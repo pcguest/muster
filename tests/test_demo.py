@@ -24,6 +24,9 @@ def test_demo_generates_and_runs_the_full_pipeline(tmp_path, monkeypatch):
     assert (demo / "sources" / "receivals_karrilong.csv").is_file()
     assert (demo / "sources" / "grain_intake_mundawarra.csv").is_file()
     assert (demo / "sources" / "bellandry_receivals.xlsx").is_file()
+    assert (demo / "mapping-review.yaml").is_file()
+    assert (demo / "muster.schedule").read_text(encoding="utf-8") == "0 6 * * 1-5\n"
+    assert (demo / "warehouse.db").is_file()
 
     published = pl.read_csv(demo / "output" / "receivals.csv")
     ids = sorted(published.get_column("receival_id").to_list())
@@ -50,7 +53,7 @@ def test_demo_generates_and_runs_the_full_pipeline(tmp_path, monkeypatch):
     ]
 
     run_ids = verify_chain(demo / "runs")
-    assert len(run_ids) == 1
+    assert len(run_ids) == 2
     manifest = json.loads(
         (demo / "runs" / run_ids[0] / "manifest.json").read_text(encoding="utf-8")
     )
@@ -64,6 +67,12 @@ def test_demo_generates_and_runs_the_full_pipeline(tmp_path, monkeypatch):
         "warnings": 4,
     }
     assert (demo / "output" / "report.html").is_file()
+    publish_manifest = json.loads(
+        (demo / "runs" / run_ids[1] / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert publish_manifest["kind"] == "publish"
+    assert publish_manifest["publish"]["outcome"] == "published"
+    assert publish_manifest["publish"]["forced"] is True
 
     # The promised remediation arc: the demo prints the exact command that
     # corrects the uncoercible weight on R-2004; running it and rerunning
@@ -98,7 +107,7 @@ def test_demo_generates_and_runs_the_full_pipeline(tmp_path, monkeypatch):
     assert recovered.get_column("tonnes")[0] == 27.9
 
     run_ids = verify_chain(demo / "runs")
-    assert len(run_ids) == 2
+    assert len(run_ids) == 3
     manifest = json.loads(
         (demo / "runs" / run_ids[-1] / "manifest.json").read_text(encoding="utf-8")
     )

@@ -9,11 +9,21 @@
     <p>No review file yet. Run <code>muster run --assist</code> to gather
     proposals for unmapped columns; they will appear here for a decision.</p>
   </div>
+  {% elif not review.proposals %}
+  <div class="panel empty-state">
+    <p>The review file is valid and contains no proposals. There is nothing to decide.</p>
+  </div>
+  {% else %}
+  {% if review.provider == 'bundled-demo' %}
+  <p class="meta">Bundled synthetic review fixture generated at
+  {{ review.generated_at }}. No request left this machine. Nothing applies
+  until a person records a decision.</p>
   {% else %}
   <p class="meta">Proposed by {{ review.provider }} model
   <code>{{ review.model }}</code> at {{ review.generated_at }}. Only column
   headings, inferred types and the redacted samples shown here ever left the
   machine. Nothing applies until accepted.</p>
+  {% endif %}
   <div class="panel">
   <table>
     <tr><th>Column</th><th>Proposed target</th><th class="num">Confidence</th>

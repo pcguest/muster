@@ -116,14 +116,57 @@ the run directory.
 muster serve
 ```
 
-The dashboard shows the latest run, per-field quality and trends across
-runs, a filterable exceptions browser (resolve, dismiss or correct with a
-note — decisions append to `runs/resolutions.jsonl`; history is never
-mutated),
-the mapping review flow with buttons, a run trigger, and the report
-inline. It binds 127.0.0.1 by default and requires a login token generated
-on first serve — the threat model, and the reasons behind each control,
-are in [SECURITY.md](SECURITY.md).
+The dashboard shows the latest run and per-field quality. The shared
+navigation reaches every operating view directly: trends across runs;
+filterable exceptions; remediation decisions and corrections awaiting a
+rerun; mapping review; configured publish targets, their latest manifest
+outcome and schedule/daemon status; and the complete run report. Resolve,
+dismiss and correct actions append to `runs/resolutions.jsonl`; history is
+never mutated. A browser-triggered run remains visibly in progress while
+the last completed evidence stays on screen, and every view has a clear
+fresh, clean and unavailable state rather than a blank panel or traceback.
+
+The pages are server-rendered with no JavaScript or external requests. The
+active navigation item is identified visually and with `aria-current`, all
+form controls are labelled, and the interface is keyboard-operable. Muster
+binds 127.0.0.1 by default and requires a login token generated on first
+serve — the threat model, and the reasons behind each control, are in
+[SECURITY.md](SECURITY.md).
+
+### Guided demo
+
+Use this click-path for a compact live walkthrough:
+
+1. Run `muster demo`, then `cd demo && muster serve`; log in with the token
+   printed by the server.
+2. On **Dashboard**, read the 17-row run summary and field-quality bars, then
+   open **Trends** to show published, held and quality counts from manifests.
+3. Open **Exceptions**, find ticket R-2004's `n/a` tonnes value, expand
+   **Correct this value**, enter `27.9` with the note `weighbridge docket
+   shows 27.9 t`, and record the correction.
+4. Open **Remediation** to show the append-only decision awaiting a rerun,
+   then use **Run pipeline**. The recovered row is revalidated; published
+   rises from 11 to 12 and held falls from 5 to 4.
+5. Open **Report** for the inline summary, field and source quality, mapping
+   decisions, exception counts and held conflict. The standalone document
+   remains available from that page.
+6. Open **Publishing** to show the configured SQLite target, the forced demo
+   publish and its recorded quality override, plus the weekday schedule and
+   stopped daemon state. Finish at **Mapping review**, where the synthetic
+   operator-column proposal demonstrates a human decision without sending
+   data anywhere.
+
+### Refreshing interface screenshots
+
+The documentation images should be captured from the populated demo at a
+1440 × 1000 viewport. Install Playwright and Chromium in a documentation
+environment, run `muster demo --force`, then `cd demo && muster serve`. Log in
+with the printed token and capture full-page PNGs of `/` as
+`../docs/dashboard.png` and `/report/document` as `../docs/report.png`. Repeat the
+render at a 390 × 844 viewport to check navigation wrapping, table scrolling
+and text fit before committing the desktop images. Playwright was not
+available in the release environment for this update, so no unverified image
+was substituted.
 
 ## 7. Fixing what was held: `muster resolve`
 

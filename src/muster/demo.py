@@ -105,6 +105,20 @@ targets:
     table: receivals
 """
 
+DEMO_REVIEW = """\
+# Bundled demo fixture: synthetic evidence, no request left this machine.
+generated_at: "2026-07-13T00:00:00+00:00"
+provider: bundled-demo
+model: illustrative-fixture
+proposals:
+  - column: WEIGHBRIDGE OPERATOR
+    target: null
+    confidence: 99
+    rationale: No canonical field represents the operator; keep it unmapped.
+    samples: ["B. Sutter", "C. Ngata"]
+    status: pending
+"""
+
 # Karrilong writes tidy, canonical headings and ISO dates.
 _KARRILONG = """\
 receival_id,grower,commodity,tonnes,receival_date,moisture_pct,paid
@@ -161,6 +175,10 @@ def write_demo(target: Path) -> list[Path]:
     sources.mkdir(parents=True)
     written = [target / "muster.yaml"]
     written[0].write_text(DEMO_CONFIG, encoding="utf-8")
+    review = target / "mapping-review.yaml"
+    review.write_text(DEMO_REVIEW, encoding="utf-8")
+    schedule = target / "muster.schedule"
+    schedule.write_text("0 6 * * 1-5\n", encoding="utf-8")
 
     karrilong = sources / "receivals_karrilong.csv"
     karrilong.write_text(_KARRILONG, encoding="utf-8")
@@ -168,7 +186,7 @@ def write_demo(target: Path) -> list[Path]:
     mundawarra.write_text(_MUNDAWARRA, encoding="utf-8")
     bellandry = sources / "bellandry_receivals.xlsx"
     pl.DataFrame(_BELLANDRY).write_excel(bellandry)
-    written += [karrilong, mundawarra, bellandry]
+    written += [review, schedule, karrilong, mundawarra, bellandry]
 
     logger.info("demo written target=%s files=%d", target, len(written))
     return written

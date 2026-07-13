@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Muster · {{ page_heading }} unavailable{% endblock %}
+{% block heading %}{{ page_heading }}{% endblock %}
+{% block content %}
+<section aria-labelledby="page-error-heading">
+  <h2 id="page-error-heading">Unable to show this view</h2>
+  <div class="panel empty-state status-bad" role="alert">
+    <p>{{ error_message }}</p>
+  </div>
+</section>
+{% endblock %}

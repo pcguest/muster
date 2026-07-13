@@ -52,14 +52,17 @@ Requires Python 3.11 or later.
 git clone https://github.com/pcguest/muster && cd muster
 pipx install .
 muster demo
+cd demo
+muster serve
 ```
 
 (PyPI publication is pending; until then, install from a clone.)
 
 `muster demo` writes three deliberately disagreeing, entirely synthetic
-grain-receival spreadsheets and runs the whole pipeline over them: open
-`demo/output/report.html` for the result, `demo/output/exceptions.csv` for
-what misbehaved and why. Then, on your own files:
+grain-receival spreadsheets and runs the whole pipeline over them. It also
+populates a local SQLite publish outcome, a mapping-review fixture and a
+weekday schedule so `cd demo && muster serve` opens the complete interface,
+not a shell of empty panels. Then, on your own files:
 
 ```sh
 muster profile sources/       # inspect columns, types, inconsistencies
@@ -86,7 +89,7 @@ narrative; `muster --help` lists every command.
 | Report | Self-contained `report.html` per run: completeness, validity, per-file quality, mapping decisions, exceptions — readable by non-technical reviewers |
 | Audit trail | Tamper-evident hash chain of manifests over every run and publish |
 | Publishing | `muster publish` to SQLite, PostgreSQL, REST endpoints or Salesforce, with dry-run, integrity checks and idempotent writes ([docs/CONNECTORS.md](docs/CONNECTORS.md)) |
-| Dashboard | `muster serve`: local-first, token-authenticated browser UI for runs, trends, exception triage and mapping review |
+| Dashboard | `muster serve`: local-first, token-authenticated browser UI for runs, trends, exception triage and remediation, mapping review, publishing status, automation and the report |
 | Scheduling | `muster schedule` + `muster daemon`, or generated systemd/cron units |
 | LLM assist (opt-in) | Proposes mappings for unmapped columns; sends only headings, types and redacted samples; nothing applies without human acceptance |
 | Performance | 5 million rows consolidated and validated in under nine seconds on a laptop ([docs/PERFORMANCE.md](docs/PERFORMANCE.md)) |
@@ -99,6 +102,28 @@ scripts — for the person who owns the data, not just the person who ran
 the tool:
 
 ![Muster run report](docs/report.png)
+
+## The dashboard
+
+`muster serve` is the operating surface for an existing Muster project. One
+consistent navigation bar connects the latest run and field quality,
+exceptions, remediation status, mapping review, trends, configured publish
+targets and their last manifest outcome, schedule/daemon status, and the full
+run report. It is server-rendered and keyboard-operable, with no JavaScript,
+CDNs or external requests. Every page has an explicit fresh-project, clean or
+unavailable state; a browser-triggered run remains visibly in progress without
+hiding the last completed evidence.
+
+The fastest complete walkthrough is the bundled demo:
+
+```sh
+muster demo
+cd demo
+muster serve
+```
+
+The login token is printed once the server starts. The guided click-path is in
+[docs/WORKFLOW.md](docs/WORKFLOW.md#guided-demo).
 
 ## Architecture
 

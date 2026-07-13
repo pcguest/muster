@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Muster · publishing{% endblock %}
+{% block heading %}publishing{% endblock %}
+{% block content %}
+<section aria-labelledby="targets-heading">
+  <h2 id="targets-heading">Configured publish targets</h2>
+  <div class="panel">
+  {% if targets %}
+  <table>
+    <thead><tr><th>Target</th><th>Type</th><th>Destination</th><th>Upsert keys</th></tr></thead>
+    <tbody>{% for target in targets %}<tr><td><code>{{ target.name }}</code></td><td><span class="tag exact">Configured · {{ target.type }}</span></td><td>{{ target.destination }}</td><td><code>{{ target.key_columns | join(', ') if target.key_columns else 'none configured' }}</code></td></tr>{% endfor %}</tbody>
+  </table>
+  {% else %}
+  <div class="empty-state-copy"><strong>No publish targets configured.</strong> Add a target to <code>muster.yaml</code> before publishing.</div>
+  {% endif %}
+  </div>
+</section>
+
+<section aria-labelledby="publish-outcome-heading">
+  <h2 id="publish-outcome-heading">Last publish outcome</h2>
+  <div class="panel">
+  {% if latest_publish %}
+    <div class="status-line"><span class="tag {{ 'exact' if latest_publish.outcome == 'published' else 'warning' if latest_publish.outcome == 'partial' else 'unmapped' }}">{{ latest_publish.outcome | title }}</span>{% if latest_publish.forced %}<span class="tag warning">Forced · quality override recorded</span>{% endif %}</div>
+    <dl class="facts">
+      <div><dt>Target</dt><dd><code>{{ latest_publish.target }}</code> · {{ latest_publish.type }}</dd></div>
+      <div><dt>Destination</dt><dd>{{ latest_publish.destination }}</dd></div>
+      <div><dt>Source run</dt><dd><code>{{ latest_publish.source_run }}</code></dd></div>
+      <div><dt>Records</dt><dd>{{ latest_publish.rows_sent }} sent · {{ latest_publish.rows_failed }} failed · {{ latest_publish.rows }} total</dd></div>
+      <div><dt>Finished</dt><dd>{{ latest_publish.finished_at[:19].replace('T', ' ') }} · {{ '%.2f' | format(latest_publish.duration_seconds) }}s</dd></div>
+    </dl>
+  {% else %}
+    <div class="empty-state-copy"><strong>No publish recorded yet.</strong> Outcomes appear here after <code>muster publish</code> writes to the manifest chain.</div>
+  {% endif %}
+  </div>
+</section>
+
+<section aria-labelledby="automation-heading">
+  <h2 id="automation-heading">Schedule and daemon</h2>
+  <div class="panel">
+  {% if automation.error %}
+    <div class="empty-state-copy status-bad" role="alert"><strong>Schedule invalid.</strong> {{ automation.error }}</div>
+  {% elif automation.schedule %}
+    <dl class="facts">
+      <div><dt>Schedule</dt><dd><code>{{ automation.schedule }}</code></dd></div>
+      <div><dt>Next run</dt><dd>{{ automation.next_run }}</dd></div>
+      <div><dt>Daemon</dt><dd>{% if automation.daemon_pid %}<span class="status-good">Running · PID {{ automation.daemon_pid }}</span>{% else %}<span class="dim">Stopped · schedule remains configured</span>{% endif %}</dd></div>
+    </dl>
+  {% else %}
+    <div class="empty-state-copy"><strong>No schedule configured.</strong> Use <code>muster schedule</code> to establish an automation cadence.</div>
+  {% endif %}
+  </div>
+</section>
+{% endblock %}

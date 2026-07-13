@@ -4,7 +4,7 @@
 {% block content %}
 <section>
   <h2>Latest run's exceptions</h2>
-  {% if correction_error %}<div class="flash error">{{ correction_error }}</div>{% endif %}
+  {% if correction_error %}<div class="flash error" role="alert">{{ correction_error }}</div>{% endif %}
   <form method="get" action="/exceptions" class="filters">
     <label>Severity
       <select name="severity">
@@ -66,7 +66,8 @@
         {% else %}
         <form method="post" action="/exceptions/{{ r.id }}" class="decide">
           <input type="hidden" name="csrf" value="{{ csrf }}">
-          <input type="text" name="note" maxlength="500" placeholder="note (optional)">
+          <label class="sr-only" for="decision-note-{{ loop.index0 }}">Decision note</label>
+          <input id="decision-note-{{ loop.index0 }}" type="text" name="note" maxlength="500" placeholder="note (optional)">
           <button type="submit" name="action" value="resolved" class="primary">Resolve</button>
           <button type="submit" name="action" value="dismissed" class="quiet">Dismiss</button>
         </form>
@@ -75,10 +76,11 @@
           <summary>Correct this value…</summary>
           <form method="post" action="/exceptions/{{ r.id }}/correct" class="decide">
             <input type="hidden" name="csrf" value="{{ csrf }}">
-            <label>{{ r.field }}
-              <input type="text" name="value" maxlength="500" value="{{ r.value }}" required>
+            <label for="corrected-value-{{ loop.index0 }}">Corrected {{ r.field }}
+              <input id="corrected-value-{{ loop.index0 }}" type="text" name="value" maxlength="500" value="{{ r.value }}" required>
             </label>
-            <input type="text" name="note" maxlength="500" placeholder="note (required)" required>
+            <label class="sr-only" for="correction-note-{{ loop.index0 }}">Reason for correction</label>
+            <input id="correction-note-{{ loop.index0 }}" type="text" name="note" maxlength="500" placeholder="reason for correction" required>
             <button type="submit" class="primary">Record correction</button>
           </form>
         </details>
@@ -89,7 +91,13 @@
     {% endfor %}
   </table>
   {% else %}
-  <p class="empty">No exceptions match — or the latest run was clean.</p>
+  {% if not has_run %}
+  <div class="empty-state-copy"><strong>No completed run yet.</strong> Run the pipeline to create the exception work queue.</div>
+  {% elif total_rows == 0 %}
+  <div class="empty-state-copy status-good"><strong>Clean run.</strong> No exceptions were recorded.</div>
+  {% else %}
+  <div class="empty-state-copy"><strong>No matches.</strong> Clear or change the filters to see the latest run's {{ total_rows }} exception(s).</div>
+  {% endif %}
   {% endif %}
   </div>
   <p class="meta">Decisions append to <code>runs/resolutions.jsonl</code>;

@@ -32,7 +32,7 @@ from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from muster import __version__
-from muster.assist import REVIEW_FILE_NAME, load_review_file, write_review_file
+from muster.assist import REVIEW_FILE_NAME, AssistError, load_review_file, write_review_file
 from muster.config import Config, ConfigError, load_config
 from muster.manifest import RUNS_DIRECTORY
 from muster.scheduler import run_once
@@ -138,6 +138,24 @@ def create_app(root: Path, config_path: Path) -> FastAPI:
             **context,
         )
         return HTMLResponse(page, status_code=status_code)
+
+    def render_problem(
+        request: Request,
+        *,
+        active: str,
+        heading: str,
+        message: str,
+        status_code: int = 500,
+    ) -> HTMLResponse:
+        logger.warning("web page unavailable page=%s reason=%s", active, message)
+        return render(
+            request,
+            "error.html",
+            status_code=status_code,
+            active=active,
+            page_heading=heading,
+            error_message=message,
+        )
 
     def page_session(request: Request) -> Session | None:
         return sessions.get(request.cookies.get(SESSION_COOKIE))
@@ -256,8 +274,17 @@ def create_app(root: Path, config_path: Path) -> FastAPI:
     def dashboard(request: Request) -> Response:
         if page_session(request) is None:
             return RedirectResponse("/login", status_code=303)
-        report = web_data.latest_report(root)
-        trends = web_data.run_trends(root)
+        try:
+            report = web_data.latest_report(root)
+            trends = web_data.run_trends(root)
+        except (OSError, ValueError, TypeError):
+            return render_problem(
+                request,
+                active="dashboard",
+                heading="dashboard",
+                message="Run history could not be read. Check the latest run artefacts "
+                "and try again.",
+            )
         peak = max((t.rows_in for t in trends), default=0)
         # Held rows whose correction is recorded but not yet applied by a
         # run. A broken configuration degrades this tile to zero rather
@@ -266,7 +293,7 @@ def create_app(root: Path, config_path: Path) -> FastAPI:
             awaiting = _rows_awaiting_rerun(
                 web_data.load_exceptions(root, fresh_config())
             )
-        except ConfigError:
+        except (ConfigError, OSError, ValueError, TypeError):
             awaiting = 0
         return render(
             request,
@@ -290,7 +317,18 @@ def create_app(root: Path, config_path: Path) -> FastAPI:
         for value in (severity, kind, file, state):
             if len(value) > 200:
                 return Response("filter value too long", status_code=422)
-        rows = web_data.load_exceptions(root, fresh_config())
+        try:
+            report = web_data.latest_report(root)
+            rows = web_data.load_exceptions(root, fresh_config())
+        except (ConfigError, OSError, ValueError, TypeError):
+            return render_problem(
+                request,
+                active="exceptions",
+                heading="exceptions",
+                message="The latest exceptions could not be read. Check the project "
+                "configuration and run artefacts, then try again.",
+            )
+        total_rows = len(rows)
         kinds = sorted({r.kind for r in rows})
         files = sorted({r.file for r in rows})
         if severity:
@@ -315,6 +353,8 @@ def create_app(root: Path, config_path: Path) -> FastAPI:
             kind=kind,
             file=file,
             state=state,
+            has_run=report is not None,
+            total_rows=total_rows,
             correction_error=correction_error,
         )
 
@@ -401,9 +441,98 @@ def create_app(root: Path, config_path: Path) -> FastAPI:
     def review_page(request: Request) -> Response:
         if page_session(request) is None:
             return RedirectResponse("/login", status_code=303)
-        review_path = root / REVIEW_FILE_NAME
-        review = load_review_file(review_path) if review_path.is_file() else None
+        try:
+            review_path = root / REVIEW_FILE_NAME
+            review = load_review_file(review_path) if review_path.is_file() else None
+        except (AssistError, OSError, ValueError, TypeError):
+            return render_problem(
+                request,
+                active="review",
+                heading="mapping review",
+                message="The mapping review file could not be read. Check it is valid "
+                "YAML, then try again.",
+            )
         return render(request, "review.html", active="review", review=review)
+
+    @app.get("/remediation", response_class=HTMLResponse)
+    def remediation_page(request: Request) -> Response:
+        if page_session(request) is None:
+            return RedirectResponse("/login", status_code=303)
+        try:
+            report = web_data.latest_report(root)
+            rows = web_data.load_exceptions(root, fresh_config())
+        except (ConfigError, OSError, ValueError, TypeError):
+            return render_problem(
+                request,
+                active="remediation",
+                heading="remediation",
+                message="Remediation status could not be read. Check the project "
+                "configuration and latest run artefacts, then try again.",
+            )
+        awaiting = [
+            row
+            for row in rows
+            if row.severity == "error" and row.resolution == "corrected"
+        ]
+        decisions = [row for row in rows if row.resolution is not None]
+        recovered = [row for row in rows if row.kind == "remediated"]
+        return render(
+            request,
+            "remediation.html",
+            active="remediation",
+            has_run=report is not None,
+            awaiting=awaiting,
+            decisions=decisions,
+            recovered=recovered,
+        )
+
+    @app.get("/trends", response_class=HTMLResponse)
+    def trends_page(request: Request) -> Response:
+        if page_session(request) is None:
+            return RedirectResponse("/login", status_code=303)
+        try:
+            trends = web_data.run_trends(root)
+        except (OSError, ValueError, TypeError):
+            return render_problem(
+                request,
+                active="trends",
+                heading="trends",
+                message="Run trends could not be read. Check the manifest chain, then "
+                "try again.",
+            )
+        peak = max((point.rows_in for point in trends), default=1)
+        return render(
+            request,
+            "trends.html",
+            active="trends",
+            trends=trends,
+            peak_rows=peak or 1,
+        )
+
+    @app.get("/publishing", response_class=HTMLResponse)
+    def publishing_page(request: Request) -> Response:
+        if page_session(request) is None:
+            return RedirectResponse("/login", status_code=303)
+        try:
+            targets = web_data.configured_targets(fresh_config())
+            latest_publish = web_data.latest_publish(root)
+            automation = web_data.automation_status(root)
+        except (ConfigError, OSError, ValueError, TypeError):
+            return render_problem(
+                request,
+                active="publishing",
+                heading="publishing",
+                message="Publishing status could not be read. Check the project "
+                "configuration and manifest chain, then try again.",
+            )
+        return render(
+            request,
+            "publishing.html",
+            active="publishing",
+            targets=targets,
+            latest_publish=latest_publish,
+            automation=automation,
+        )
 
     @app.post("/review/{index}")
     def decide_mapping(
@@ -457,18 +586,38 @@ def create_app(root: Path, config_path: Path) -> FastAPI:
         threading.Thread(target=worker, name="muster-run", daemon=True).start()
         return RedirectResponse("/?msg=run-started", status_code=303)
 
-    @app.get("/report")
+    @app.get("/report", response_class=HTMLResponse)
     def report_page(request: Request) -> Response:
         if page_session(request) is None:
             return RedirectResponse("/login", status_code=303)
-        report_path = root / fresh_config().output.directory / "report.html"
+        try:
+            report = web_data.latest_report(root)
+        except (OSError, ValueError, TypeError):
+            return render_problem(
+                request,
+                active="report",
+                heading="report",
+                message="The latest report could not be read. Check the run artefacts, "
+                "then try again.",
+            )
+        return render(request, "report.html", active="report", report=report)
+
+    @app.get("/report/document")
+    def report_document(request: Request) -> Response:
+        if page_session(request) is None:
+            return RedirectResponse("/login", status_code=303)
+        try:
+            report_path = root / fresh_config().output.directory / "report.html"
+        except ConfigError:
+            return Response("report unavailable: configuration does not parse", status_code=503)
         if not report_path.is_file():
             return Response("no report yet; run the pipeline first", status_code=404)
         # The archived report carries its own inline styles; scope a CSP that
         # allows exactly that and nothing else.
-        return HTMLResponse(
-            report_path.read_text(encoding="utf-8"),
-            headers={"Content-Security-Policy": _REPORT_CSP},
-        )
+        try:
+            document = report_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            return Response("report unavailable: document could not be read", status_code=500)
+        return HTMLResponse(document, headers={"Content-Security-Policy": _REPORT_CSP})
 
     return app

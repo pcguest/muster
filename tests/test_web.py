@@ -6,6 +6,8 @@ and never bind a socket — FastAPI's TestClient drives the app in-process.
 
 import json
 import re
+import threading
+import time
 
 import pytest
 from typer.testing import CliRunner
@@ -13,7 +15,11 @@ from typer.testing import CliRunner
 import muster.web.auth as auth_module
 from muster.assist import REVIEW_FILE_NAME, MappingProposal, ReviewFile, write_review_file
 from muster.cli import app as cli_app
+from muster.config import load_config
 from muster.credentials import clear_registered_secrets
+from muster.manifest import latest_manifest_of_kind
+from muster.publish import publish_dataset
+from muster.report import REPORT_DATA_NAME
 from muster.web import create_app
 from muster.web.data import load_resolutions
 
@@ -63,6 +69,38 @@ def client(project):
     return TestClient(create_app(project, project / "muster.yaml"))
 
 
+@pytest.fixture()
+def empty_project(tmp_path):
+    (tmp_path / "muster.yaml").write_text(CONFIG, encoding="utf-8")
+    (tmp_path / "data.csv").write_text(CSV, encoding="utf-8")
+    return tmp_path
+
+
+@pytest.fixture()
+def empty_client(empty_project):
+    from fastapi.testclient import TestClient
+
+    return TestClient(create_app(empty_project, empty_project / "muster.yaml"))
+
+
+@pytest.fixture()
+def clean_project(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "muster.yaml").write_text(CONFIG, encoding="utf-8")
+    (tmp_path / "data.csv").write_text(
+        "customer_id,spend\nC-1,10.5\nC-2,12.0\n", encoding="utf-8"
+    )
+    assert runner.invoke(cli_app, ["run"]).exit_code == 0
+    return tmp_path
+
+
+@pytest.fixture()
+def clean_client(clean_project):
+    from fastapi.testclient import TestClient
+
+    return TestClient(create_app(clean_project, clean_project / "muster.yaml"))
+
+
 def _token(project):
     return (project / auth_module.TOKEN_FILE).read_text(encoding="utf-8").strip()
 
@@ -83,7 +121,16 @@ def _csrf(client) -> str:
 
 
 def test_pages_redirect_and_posts_401_without_a_session(client):
-    for path in ("/", "/exceptions", "/review", "/report"):
+    for path in (
+        "/",
+        "/exceptions",
+        "/remediation",
+        "/review",
+        "/trends",
+        "/publishing",
+        "/report",
+        "/report/document",
+    ):
         response = client.get(path, follow_redirects=False)
         assert response.status_code == 303, path
         assert response.headers["location"] == "/login"
@@ -376,11 +423,172 @@ def test_review_flow_in_the_browser(client, project):
     )
 
 
+def test_every_page_has_a_clear_fresh_project_state(empty_client, empty_project):
+    _login(empty_client, empty_project)
+    states = {
+        "/": "Ready for the first run",
+        "/exceptions": "No completed run yet",
+        "/remediation": "No completed run yet",
+        "/review": "No review file yet",
+        "/trends": "No run history yet",
+        "/publishing": "No publish targets configured",
+        "/report": "No report yet",
+    }
+    for path, expected in states.items():
+        response = empty_client.get(path)
+        assert response.status_code == 200, path
+        assert expected in response.text, path
+        assert 'aria-current="page"' in response.text, path
+        assert "Traceback" not in response.text, path
+
+
+def test_clean_run_exception_and_remediation_states(clean_client, clean_project):
+    _login(clean_client, clean_project)
+    exceptions = clean_client.get("/exceptions")
+    assert exceptions.status_code == 200
+    assert "Clean run" in exceptions.text
+    remediation = clean_client.get("/remediation")
+    assert remediation.status_code == 200
+    assert "No corrections are waiting" in remediation.text
+
+
+def test_populated_trends_publishing_remediation_and_report_views(client, project):
+    config_text = (project / "muster.yaml").read_text(encoding="utf-8")
+    (project / "muster.yaml").write_text(
+        config_text
+        + """
+targets:
+  warehouse:
+    type: sqlite
+    path: warehouse.db
+    table: customers
+""",
+        encoding="utf-8",
+    )
+    (project / "muster.schedule").write_text("0 6 * * 1-5\n", encoding="utf-8")
+    publish_dataset(load_config(project / "muster.yaml"), project, "warehouse", force=True)
+
+    _login(client, project)
+    exception_id = _correctable_id(client)
+    response = client.post(
+        f"/exceptions/{exception_id}/correct",
+        data={
+            "csrf": _csrf(client),
+            "value": "12.5",
+            "note": "till receipt says 12.5",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+
+    trends = client.get("/trends")
+    assert trends.status_code == 200
+    assert "Quality and throughput across runs" in trends.text
+    assert "Held" in trends.text and "Published" in trends.text
+
+    publishing = client.get("/publishing")
+    assert publishing.status_code == 200
+    assert "warehouse" in publishing.text
+    assert "Published" in publishing.text
+    assert "Forced · quality override recorded" in publishing.text
+    assert "0 6 * * 1-5" in publishing.text
+    assert "Stopped · schedule remains configured" in publishing.text
+
+    remediation = client.get("/remediation")
+    assert remediation.status_code == 200
+    assert "Corrected rows awaiting rerun" in remediation.text
+    assert "till receipt says 12.5" in remediation.text
+
+    report = client.get("/report")
+    assert report.status_code == 200
+    assert "Run summary" in report.text
+    assert "Source quality" in report.text
+    assert "Mapping decisions" in report.text
+    assert "Open standalone document" in report.text
+
+
+def test_active_navigation_labels_and_csp_on_every_html_page(client, project):
+    _login(client, project)
+    active_routes = {
+        "/": "Dashboard",
+        "/exceptions": "Exceptions",
+        "/remediation": "Remediation",
+        "/review": "Mapping review",
+        "/trends": "Trends",
+        "/publishing": "Publishing",
+        "/report": "Report",
+    }
+    for path, label in active_routes.items():
+        response = client.get(path)
+        assert response.status_code == 200, path
+        assert re.search(
+            rf'<a href="{re.escape(path)}" class="on" aria-current="page">{label}</a>',
+            response.text,
+        ), path
+        assert "<script" not in response.text.lower(), path
+        assert "style=" not in response.text.lower(), path
+        csp = response.headers["content-security-policy"]
+        assert "default-src 'none'" in csp
+        assert "style-src 'self'" in csp
+        assert "'unsafe-inline'" not in csp
+
+    exceptions = client.get("/exceptions").text
+    for input_id in re.findall(r'<input id="([^"]+)"[^>]+type="text"', exceptions):
+        assert f'for="{input_id}"' in exceptions
+
+
+def test_dashboard_renders_running_and_failed_run_states(client, project, monkeypatch):
+    started = threading.Event()
+    release = threading.Event()
+
+    def blocked_run(root, config):
+        started.set()
+        release.wait(timeout=2)
+        return 0
+
+    monkeypatch.setattr("muster.web.app.run_once", blocked_run)
+    _login(client, project)
+    response = client.post("/run", data={"csrf": _csrf(client)})
+    assert response.status_code == 200
+    assert started.wait(timeout=1)
+    assert "Pipeline running" in client.get("/").text
+    release.set()
+
+    deadline = time.monotonic() + 2
+    while "Run pipeline" not in client.get("/").text and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+    def failed_run(root, config):
+        raise RuntimeError("deliberate test failure")
+
+    monkeypatch.setattr("muster.web.app.run_once", failed_run)
+    client.post("/run", data={"csrf": _csrf(client)})
+    deadline = time.monotonic() + 2
+    page = client.get("/").text
+    while "Last run failed" not in page and time.monotonic() < deadline:
+        time.sleep(0.01)
+        page = client.get("/").text
+    assert "Last run failed" in page
+    assert "deliberate test failure" not in page
+
+
+def test_malformed_run_artefact_renders_a_calm_error(client, project):
+    found = latest_manifest_of_kind(project / "runs", "run")
+    assert found is not None
+    (found[0].parent / REPORT_DATA_NAME).write_text("{", encoding="utf-8")
+    _login(client, project)
+    response = client.get("/")
+    assert response.status_code == 500
+    assert "Unable to show this view" in response.text
+    assert "Run history could not be read" in response.text
+    assert "Traceback" not in response.text
+
+
 def test_dashboard_report_and_security_headers(client, project):
     _login(client, project)
     dashboard = client.get("/")
     assert "rows published" in dashboard.text
-    assert "Trends across runs" in dashboard.text
+    assert "Recent runs" in dashboard.text
     csp = dashboard.headers["content-security-policy"]
     assert "default-src 'none'" in csp
     assert "script-src 'nonce-" in csp
@@ -388,7 +596,7 @@ def test_dashboard_report_and_security_headers(client, project):
     assert dashboard.headers["x-content-type-options"] == "nosniff"
     assert dashboard.headers["referrer-policy"] == "no-referrer"
 
-    report = client.get("/report")
+    report = client.get("/report/document")
     assert report.status_code == 200
     assert "Muster run report" in report.text
     report_csp = report.headers["content-security-policy"]

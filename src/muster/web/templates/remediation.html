@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Muster · remediation{% endblock %}
+{% block heading %}remediation{% endblock %}
+{% block content %}
+<section aria-labelledby="remediation-queue-heading">
+  <div class="section-heading"><h2 id="remediation-queue-heading">Corrected rows awaiting rerun</h2><a href="/exceptions?severity=error">Open exception work queue</a></div>
+  <div class="panel">
+  {% if awaiting %}
+  <table><thead><tr><th>File</th><th>Row</th><th>Field</th><th>Original</th><th>Correction</th><th>Reason</th></tr></thead><tbody>
+  {% for row in awaiting %}<tr><td>{{ row.file }}</td><td class="num">{{ row.row }}</td><td><code>{{ row.field }}</code></td><td class="values">{{ row.value }}</td><td class="values">{% for name, value in row.corrected_values.items() %}{{ name }} → {{ value }}{% if not loop.last %}, {% endif %}{% endfor %}</td><td>{{ row.note }}</td></tr>{% endfor %}
+  </tbody></table>
+  {% elif not has_run %}
+  <div class="empty-state-copy"><strong>No completed run yet.</strong> Remediation starts when a run records held rows.</div>
+  {% else %}
+  <div class="empty-state-copy status-good"><strong>No corrections are waiting.</strong> The current run has no recorded correction pending a rerun.</div>
+  {% endif %}
+  </div>
+</section>
+
+<section aria-labelledby="recovered-heading">
+  <h2 id="recovered-heading">Recovered in the latest run</h2>
+  <div class="panel">
+  {% if recovered %}
+  <table><thead><tr><th>File</th><th>Row</th><th>Status</th><th>Audit record</th></tr></thead><tbody>{% for row in recovered %}<tr><td>{{ row.file }}</td><td class="num">{{ row.row }}</td><td><span class="tag exact">Recovered · revalidated</span></td><td>{{ row.reason }}</td></tr>{% endfor %}</tbody></table>
+  {% else %}
+  <div class="empty-state-copy"><strong>No rows recovered in this run.</strong> A corrected row appears here only after a full rerun and successful revalidation.</div>
+  {% endif %}
+  </div>
+</section>
+
+<section aria-labelledby="decisions-heading">
+  <h2 id="decisions-heading">Current decisions on latest exceptions</h2>
+  <div class="panel">
+  {% if decisions %}
+  <table><thead><tr><th>Exception</th><th>Source</th><th>Decision</th><th>Note</th><th>Recorded</th></tr></thead><tbody>{% for row in decisions %}<tr><td><code>{{ row.id }}</code></td><td>{{ row.file }}{% if row.row %} · row {{ row.row }}{% endif %}</td><td><span class="tag {{ 'exact' if row.resolution in ('resolved', 'corrected') else 'unmapped' }}">{{ row.resolution | title }}</span></td><td>{{ row.note or 'No note recorded' }}</td><td class="dim">{{ row.resolved_at }}</td></tr>{% endfor %}</tbody></table>
+  {% else %}
+  <div class="empty-state-copy"><strong>No decisions on the latest exceptions.</strong> Resolve, dismiss or correct an item in the exception work queue.</div>
+  {% endif %}
+  </div>
+</section>
+{% endblock %}

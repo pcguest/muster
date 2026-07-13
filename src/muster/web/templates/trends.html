@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Muster · trends{% endblock %}
+{% block heading %}trends{% endblock %}
+{% block content %}
+<section aria-labelledby="run-trends-heading">
+  <h2 id="run-trends-heading">Quality and throughput across runs</h2>
+  <div class="panel">
+  {% if trends %}
+  <table>
+    <thead><tr><th>Run</th><th>Finished</th><th class="num">Quality</th><th class="num">Rows in</th><th class="num">Published</th><th class="num">Held</th><th class="num">Errors</th><th class="num">Warnings</th><th class="num">Seconds</th></tr></thead>
+    <tbody>
+    {% for t in trends %}
+    <tr>
+      <td><code>{{ t.run_id }}</code></td>
+      <td class="dim">{{ t.finished_at[:16].replace('T', ' ') }}</td>
+      <td class="num">{% if t.quality_pct is none %}not available{% else %}<progress class="quality {{ 'good-fill' if t.quality_pct >= 95 else 'warn-fill' if t.quality_pct >= 80 else 'bad-fill' }}" value="{{ t.quality_pct }}" max="100" aria-label="{{ t.quality_pct }} percent"></progress>{{ t.quality_pct }}%{% endif %}</td>
+      <td class="num">{{ t.rows_in }}</td>
+      <td class="num"><progress class="quality good-fill" value="{{ t.rows_published }}" max="{{ peak_rows }}" aria-label="{{ t.rows_published }} rows published"></progress>{{ t.rows_published }}</td>
+      <td class="num">{{ t.rows_held }}</td>
+      <td class="num">{% if t.errors %}<span class="sev-error">Error · {{ t.errors }}</span>{% else %}<span class="status-good">Clear · 0</span>{% endif %}</td>
+      <td class="num">{% if t.warnings %}<span class="sev-warning">Warning · {{ t.warnings }}</span>{% else %}<span class="status-good">Clear · 0</span>{% endif %}</td>
+      <td class="num">{{ '%.2f' | format(t.duration_seconds) }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty-state-copy"><strong>No run history yet.</strong> Trends appear after the first completed pipeline run.</div>
+  {% endif %}
+  </div>
+</section>
+{% endblock %}

@@ -351,8 +351,22 @@ def demo(
         )
     console.print(
         f"\nA 'warehouse' sqlite target is configured too: from {path}/, try "
-        "'muster publish warehouse --dry-run' — the real publish refuses "
-        "because of the demo's deliberate errors, unless you pass --force."
+        "'muster publish warehouse --dry-run'. The demo also performs one "
+        "forced publish to its local SQLite target so the dashboard can show "
+        "the complete audited outcome."
+    )
+    try:
+        published = publish_dataset(config, root, "warehouse", force=True)
+    except PublishError as exc:
+        errors.print(f"Could not populate the demo publish history: {exc}")
+        raise typer.Exit(code=1) from exc
+    console.print(
+        f"Published {published.rows_sent} synthetic row(s) to warehouse.db; "
+        f"the forced quality override is recorded in {published.manifest_path}."
+    )
+    console.print(
+        f"From {path}/, run 'muster serve' for the complete dashboard. The "
+        "bundled mapping proposal and weekday schedule are ready to review."
     )
 
 
@@ -717,7 +731,7 @@ def serve(
     ] = "127.0.0.1",
     port: Annotated[int, typer.Option(min=1, max=65535)] = 8600,
 ) -> None:
-    """Serve the local dashboard: runs, exceptions, mapping review, report.
+    """Serve the local dashboard: runs, remediation, trends, publishing, report.
 
     Local-first: binds 127.0.0.1 unless --host says otherwise (with a
     printed warning). A single login token is generated on first serve and
