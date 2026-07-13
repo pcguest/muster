@@ -17,6 +17,7 @@ runs — history is never rewritten from a browser.
 from __future__ import annotations
 
 import logging
+import os
 import secrets
 import threading
 from collections.abc import Awaitable, Callable
@@ -26,13 +27,14 @@ from typing import Annotated
 
 from fastapi import FastAPI, Form, Request
 from fastapi import Path as PathParam
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from muster import __version__
 from muster.assist import REVIEW_FILE_NAME, load_review_file, write_review_file
 from muster.config import Config, load_config
+from muster.manifest import RUNS_DIRECTORY
 from muster.scheduler import run_once
 from muster.web import data as web_data
 from muster.web.auth import (
@@ -159,6 +161,36 @@ def create_app(root: Path, config_path: Path) -> FastAPI:
         response.headers["X-Frame-Options"] = "DENY"
         response.headers.setdefault("Cache-Control", "no-store")
         return response
+
+    # -- operational probes --------------------------------------------------
+    # Liveness and readiness for orchestrators. Deliberately unauthenticated:
+    # a probe cannot hold a session token, and neither response discloses
+    # anything beyond a status word — no paths, no configuration detail.
+
+    @app.get("/healthz")
+    def healthz() -> JSONResponse:
+        return JSONResponse({"status": "ok"})
+
+    @app.get("/readyz")
+    def readyz() -> JSONResponse:
+        try:
+            fresh_config()
+        except Exception:
+            return JSONResponse(
+                {"status": "unavailable", "reason": "configuration does not parse"},
+                status_code=503,
+            )
+        runs_dir = root / RUNS_DIRECTORY
+        # The pipeline creates runs/ under the project root on first run, so
+        # readiness means: the directory is writable, or the root is if the
+        # directory does not exist yet.
+        probe = runs_dir if runs_dir.is_dir() else root
+        if not os.access(probe, os.W_OK):
+            return JSONResponse(
+                {"status": "unavailable", "reason": "runs directory is not writable"},
+                status_code=503,
+            )
+        return JSONResponse({"status": "ok"})
 
     # -- authentication ----------------------------------------------------
 

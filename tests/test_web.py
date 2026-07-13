@@ -92,6 +92,39 @@ def test_pages_redirect_and_posts_401_without_a_session(client):
     )
 
 
+def test_health_probes_answer_without_a_session(client):
+    live = client.get("/healthz")
+    assert live.status_code == 200
+    assert live.json() == {"status": "ok"}
+    # No session, but the security headers still apply.
+    assert live.headers["X-Content-Type-Options"] == "nosniff"
+    assert "Content-Security-Policy" in live.headers
+
+    ready = client.get("/readyz")
+    assert ready.status_code == 200
+    assert ready.json() == {"status": "ok"}
+
+
+def test_readyz_degrades_on_a_broken_config_without_leaking_paths(client, project):
+    (project / "muster.yaml").write_text("fields: [", encoding="utf-8")
+    response = client.get("/readyz")
+    assert response.status_code == 503
+    body = response.json()
+    assert body == {"status": "unavailable", "reason": "configuration does not parse"}
+    assert str(project) not in json.dumps(body)
+
+
+def test_readyz_degrades_when_the_runs_directory_is_not_writable(client, project):
+    runs = project / "runs"
+    runs.chmod(0o500)
+    try:
+        response = client.get("/readyz")
+        assert response.status_code == 503
+        assert response.json()["reason"] == "runs directory is not writable"
+    finally:
+        runs.chmod(0o700)
+
+
 def test_wrong_token_is_401_and_right_token_sets_a_strict_cookie(client, project):
     wrong = client.post("/login", data={"token": "not-the-token"})
     assert wrong.status_code == 401

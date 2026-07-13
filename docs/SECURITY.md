@@ -56,6 +56,12 @@ carries a strict Content-Security-Policy (no script sources beyond a
 per-request nonce — the pages ship no scripts at all), `nosniff`,
 `Referrer-Policy: no-referrer` and frame denial.
 
+Two routes are deliberately unauthenticated: `GET /healthz` (liveness) and
+`GET /readyz` (readiness), for orchestrator probes that cannot hold a
+session. Each returns a status word and, on 503, a terse reason — no
+paths, no configuration detail, nothing an unauthenticated caller can use
+to map the deployment. Both still carry the security headers.
+
 Honest limits: the dashboard speaks plain HTTP, which is fine on loopback
 but not across a network — if you must reach it remotely, use an SSH
 tunnel rather than `--host 0.0.0.0`. The cookie cannot be marked `Secure`
