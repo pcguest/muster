@@ -4,6 +4,34 @@ All notable changes to Muster are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and Muster
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] — 2026-07-13
+
+Deployment release: everything an organisation needs to run Muster in a
+container platform. No changes to the pipeline itself.
+
+### Added
+
+- A multi-stage `Dockerfile` (python:3.12-slim): the build stage compiles
+  the wheel, the runtime stage installs it with the postgres extra and
+  runs as non-root uid 10001, with a stdlib-only `HEALTHCHECK` against the
+  new liveness probe. Plus `.dockerignore`.
+- `deploy/docker-compose.yaml`: the daemon on a schedule over a mounted
+  project, publishing to PostgreSQL, secrets from a gitignored env file —
+  every decision explained in comments. `deploy/example.env.template`
+  lists every variable; the real env file is gitignored.
+- Operational probes on `muster serve`: `GET /healthz` (liveness) and
+  `GET /readyz` (readiness — configuration parses, runs directory
+  writable; 503 with a terse reason otherwise). Deliberately
+  unauthenticated, disclosing nothing beyond a status word; security
+  headers still apply.
+- `MUSTER_LOG_FORMAT=json`: one JSON object per log line (`ts`, `level`,
+  `logger`, `msg`) for container log drivers and SIEMs. Default logfmt
+  output unchanged; secret redaction covers both formats, tracebacks
+  included.
+- `docs/DEPLOYMENT.md`: the adoption playbook — the parallel-run pilot
+  pattern, container and compose usage, secrets guidance, scheduling
+  options, and where the manifest chain fits a governance conversation.
+
 ## [1.0.1] — 2026-07-13
 
 ### Fixed
@@ -152,5 +180,6 @@ finishes the documentation, packaging and release engineering.
   `muster.yaml`; path confinement, file size limits and structured
   logging.
 
+[1.1.0]: https://github.com/pcguest/muster/releases/tag/v1.1.0
 [1.0.1]: https://github.com/pcguest/muster/releases/tag/v1.0.1
 [1.0.0]: https://github.com/pcguest/muster/releases/tag/v1.0.0
