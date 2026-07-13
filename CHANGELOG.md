@@ -4,6 +4,48 @@ All notable changes to Muster are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and Muster
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] — 2026-07-13
+
+Exception remediation: corrected rows rejoin the governed dataset under
+audit. The human loop on exceptions is now closed — a held row is a work
+item, not a dead end.
+
+### Added
+
+- Corrections in the audit log: `runs/resolutions.jsonl` records gain an
+  optional `corrected_values` map (canonical field → new value) alongside
+  the existing note and decision. History is never mutated — a
+  re-correction is a newer record superseding the old, and a later resolve
+  or dismiss withdraws the correction. Pre-1.2 records remain readable.
+- A remediation stage in `muster run`: held rows whose exception
+  fingerprints have recorded corrections get the corrected values applied
+  and the whole row re-validated against the full rule set — a correction
+  that still fails the rules leaves the row held, with a new exception
+  saying why. Recovered rows appear in `exceptions.csv` as a `remediated`
+  warning, and the manifest records how many rows entered via remediation
+  and the resolution ids used.
+- An inline correction form in the exceptions browser (current value,
+  proposed value, required note) with server-side coercion and rule checks
+  that name the precise failure; a "remediated — awaiting rerun" filter;
+  and a dashboard tile counting rows corrected but not yet rerun.
+- `muster resolve <fingerprint> --set field=value --note "..."` for
+  headless corrections with identical validation, and a
+  "N row(s) recovered via remediation" line in the run summary.
+- The demo now walks the full arc: it prints the exact `muster resolve`
+  command that corrects the uncoercible weight on ticket R-2004, and a
+  rerun watches held drop 5 → 4 and published rise 11 → 12.
+- `docs/WORKFLOW.md` gains "Fixing what was held": both correction paths,
+  the re-validation rule, and the supersede-by-new-record audit model.
+
+### Changed
+
+- Exception fingerprints are now stable across runs: the digest covers the
+  defect itself (file, row, column, value, kind, reason) and no longer
+  includes the run id, so a recorded decision follows the defect from run
+  to run. Resolutions recorded before 1.2.0 keep their history in the log
+  but no longer match — re-record any still-relevant decision from the
+  exceptions browser.
+
 ## [1.1.0] — 2026-07-13
 
 Deployment release: everything an organisation needs to run Muster in a
@@ -180,6 +222,7 @@ finishes the documentation, packaging and release engineering.
   `muster.yaml`; path confinement, file size limits and structured
   logging.
 
+[1.2.0]: https://github.com/pcguest/muster/releases/tag/v1.2.0
 [1.1.0]: https://github.com/pcguest/muster/releases/tag/v1.1.0
 [1.0.1]: https://github.com/pcguest/muster/releases/tag/v1.0.1
 [1.0.0]: https://github.com/pcguest/muster/releases/tag/v1.0.0
