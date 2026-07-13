@@ -117,14 +117,58 @@ muster serve
 ```
 
 The dashboard shows the latest run, per-field quality and trends across
-runs, a filterable exceptions browser (resolve or dismiss with a note —
-decisions append to `runs/resolutions.jsonl`; history is never mutated),
+runs, a filterable exceptions browser (resolve, dismiss or correct with a
+note — decisions append to `runs/resolutions.jsonl`; history is never
+mutated),
 the mapping review flow with buttons, a run trigger, and the report
 inline. It binds 127.0.0.1 by default and requires a login token generated
 on first serve — the threat model, and the reasons behind each control,
 are in [SECURITY.md](SECURITY.md).
 
-## 7. Send it somewhere: `muster publish`
+## 7. Fixing what was held: `muster resolve`
+
+An error-severity exception holds its row out of the governed dataset, but
+holding is not the end of the story. When a person establishes what the
+value should have been — the weighbridge docket, the till receipt, a phone
+call to whoever typed it — the correction is recorded against the
+exception's fingerprint, from either surface:
+
+- **In the browser**: the exceptions browser shows an inline correction
+  form on every row-level error — the current value, the proposed value,
+  and a note saying why the correction is right (required). The proposed
+  value is checked on the spot: it must coerce to the field's declared
+  type and pass that field's rules, and a rejection tells you precisely
+  which rule failed.
+- **Headless**: `muster resolve <fingerprint> --set field=value --note
+  "..."` records exactly the same thing with exactly the same validation;
+  `--set` repeats for corrections spanning several fields. Fingerprints
+  are shown in the exceptions browser, and the demo prints a ready-made
+  example.
+
+Nothing changes until the next `muster run`. The pipeline re-reads the
+sources, finds the same defect (the fingerprint is a digest of the defect
+itself, so it is stable from run to run), applies the corrected values and
+**re-validates the whole row against the full rule set** — cross-field
+rules included. Only a row whose every error is corrected and whose
+re-validation is clean rejoins the governed dataset; anything less leaves
+the row held, with a new exception saying exactly why the correction was
+not enough. A recovered row appears in `exceptions.csv` as a
+`remediated` warning naming the resolutions used, and the run's manifest
+records how many rows entered via remediation and which decisions put
+them there — the audit chain shows precisely which human judgements
+shaped the dataset.
+
+The audit model is supersede-by-new-record: corrections append to
+`runs/resolutions.jsonl` and history is never rewritten. Recording a
+better correction later simply appends a newer record for the same
+fingerprint, which takes precedence; a later resolve or dismiss withdraws
+the correction entirely. Because corrections are standing decisions keyed
+to the defect, they keep applying on every run until the source file
+itself is fixed — and if the source cell changes to a different value, the
+fingerprint changes and the old correction quietly stops matching rather
+than being applied to data it never described.
+
+## 8. Send it somewhere: `muster publish`
 
 ```sh
 muster publish warehouse --dry-run   # print the plan; write nothing
@@ -142,7 +186,7 @@ ID), so republishing converges instead of duplicating, and every publish —
 successful, partial, failed or forced — appends its own manifest to the
 chain.
 
-## 8. Make it routine: `muster schedule`
+## 9. Make it routine: `muster schedule`
 
 ```sh
 muster schedule "0 6 * * 1-5"   # weekdays at 06:00

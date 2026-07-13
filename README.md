@@ -30,7 +30,10 @@ it could not handle and everything it did.
 - **Exceptions go to humans.** The exceptions file and the dashboard's
   exceptions browser are a work queue for people, not a log to ignore.
   Errors hold rows out of the governed dataset until someone acts;
-  resolutions append to an audit log and never rewrite history.
+  resolutions append to an audit log and never rewrite history. A held row
+  can be corrected — in the browser or with `muster resolve` — and rejoins
+  the governed dataset on the next run only after re-validating against
+  the full rule set, with the decision recorded in the manifest chain.
 - **Configuration is confirmed, not assumed.** `muster init --from` will
   propose a schema from your real files, but every inference is marked
   `PROPOSED` and Muster refuses to run until a person has reviewed and
