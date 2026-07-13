@@ -30,6 +30,7 @@ from muster.mapping import ColumnMatch, map_columns
 from muster.readers import ROW_COLUMN, ReaderError, iter_table_chunks
 from muster.reconcile import reconcile
 from muster.records import ExceptionRecord, count_by_severity, write_exceptions
+from muster.remediation import apply_corrections, load_corrections
 from muster.report import REPORT_DATA_NAME, build_report, write_report
 from muster.rules import held_row_set, validate_frame
 from muster.security import (
@@ -60,6 +61,7 @@ class RunResult:
     rows_published: int
     rows_held: int
     rows_superseded: int
+    rows_remediated: int
     error_count: int
     warning_count: int
     output_parquet: Path
@@ -69,6 +71,8 @@ class RunResult:
     manifest_path: Path
     # unmapped column heading -> a few raw sample values, for --assist
     unmapped_samples: dict[str, list[str]]
+    # resolution ids whose corrections put rows into the governed dataset
+    remediation_resolutions: list[str]
 
 
 def discover_sources(
@@ -326,6 +330,16 @@ def run_pipeline(
     exceptions.extend(validate_frame(candidates, config))
     candidates = _drop_held_rows(candidates, exceptions)
 
+    # Remediation: held rows with a recorded, still-valid correction are
+    # corrected, re-validated against the full rule set and recovered; they
+    # join the candidates before reconciliation like any other row.
+    remediation = apply_corrections(
+        all_rows, exceptions, config, load_corrections(root)
+    )
+    exceptions = remediation.exceptions
+    if remediation.frame.height:
+        candidates = pl.concat([candidates, remediation.frame], how="vertical")
+
     reconciled = reconcile(candidates, config, mtimes)
     exceptions.extend(reconciled.exceptions)
     published = reconciled.frame
@@ -383,9 +397,11 @@ def run_pipeline(
             "rows_published": rows_published,
             "rows_held": rows_held,
             "rows_superseded": reconciled.rows_superseded,
+            "rows_remediated": remediation.rows_remediated,
             "errors": severities["error"],
             "warnings": severities["warning"],
         },
+        remediation_resolutions=remediation.resolution_ids,
     )
 
     logger.info(
@@ -402,6 +418,7 @@ def run_pipeline(
         rows_published=rows_published,
         rows_held=rows_held,
         rows_superseded=reconciled.rows_superseded,
+        rows_remediated=remediation.rows_remediated,
         error_count=severities["error"],
         warning_count=severities["warning"],
         output_parquet=output_parquet,
@@ -410,4 +427,5 @@ def run_pipeline(
         report_html=report_html,
         manifest_path=manifest_path,
         unmapped_samples=unmapped_samples,
+        remediation_resolutions=remediation.resolution_ids,
     )

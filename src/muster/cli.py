@@ -1,5 +1,5 @@
 """Command-line interface: init, confirm, profile, run, demo, review,
-publish, report, schedule, daemon and serve."""
+resolve, publish, report, schedule, daemon and serve."""
 
 import dataclasses
 import json
@@ -31,6 +31,12 @@ from muster.manifest import RUNS_DIRECTORY, latest_manifest_of_kind
 from muster.pipeline import PipelineError, RunResult, run_pipeline
 from muster.profiling import FileProfile, profile_folder
 from muster.publish import PublishError, publish_dataset
+from muster.remediation import (
+    MAX_NOTE_LENGTH,
+    append_resolution,
+    check_correction,
+    load_exceptions,
+)
 from muster.report import REPORT_DATA_NAME, RunReportData, write_report
 from muster.scaffold import confirm_text, propose_config
 from muster.scheduler import (
@@ -196,6 +202,11 @@ def _print_run_summary(result: RunResult) -> None:
         f"{result.files_read} file(s); {result.rows_held} held, "
         f"{result.rows_superseded} superseded."
     )
+    if result.rows_remediated:
+        console.print(
+            f"  {result.rows_remediated} row(s) recovered via remediation "
+            f"(resolutions {', '.join(result.remediation_resolutions)})."
+        )
     console.print(f"  dataset:    {result.output_parquet} and {result.output_csv}")
     console.print(
         f"  exceptions: {result.error_count} error(s), {result.warning_count} "
@@ -313,8 +324,33 @@ def demo(
         f"'muster init --from {path / 'sources'}' to watch a configuration "
         "being proposed from these files."
     )
+    root = config_path.parent
+    held_weight = next(
+        (
+            row
+            for row in load_exceptions(root, config)
+            if row.kind == "coercion" and row.value == "n/a"
+        ),
+        None,
+    )
+    if held_weight is not None:
+        console.print(
+            "\nOne held row is fixable from here: ticket R-2004's weight "
+            "reads 'n/a', so the row cannot join the governed dataset. "
+            "Suppose the weighbridge docket shows 27.9 tonnes — record the "
+            f"correction and rerun (from {path}/):"
+        )
+        console.print(
+            f"  muster resolve {held_weight.id} --set tonnes=27.9 "
+            '--note "weighbridge docket shows 27.9 t"'
+        )
+        console.print("  muster run")
+        console.print(
+            "Held drops 5 → 4 and published rises 11 → 12; the new run's "
+            "manifest records that the row entered via your recorded decision."
+        )
     console.print(
-        f"A 'warehouse' sqlite target is configured too: from {path}/, try "
+        f"\nA 'warehouse' sqlite target is configured too: from {path}/, try "
         "'muster publish warehouse --dry-run' — the real publish refuses "
         "because of the demo's deliberate errors, unless you pass --force."
     )
@@ -401,6 +437,90 @@ def review(
     console.print(
         f"\nRecorded {accepted} accepted and {rejected} rejected proposal(s) in "
         f"{path}. Accepted mappings apply from the next 'muster run'."
+    )
+
+
+@app.command()
+def resolve(
+    fingerprint: Annotated[
+        str,
+        typer.Argument(
+            help="The exception's fingerprint, shown in the dashboard's "
+            "exceptions browser (16 hex characters)."
+        ),
+    ],
+    set_values: Annotated[
+        list[str],
+        typer.Option(
+            "--set",
+            help="Corrected value as field=value; repeat for several fields.",
+        ),
+    ],
+    note: Annotated[
+        str,
+        typer.Option("--note", help="Why the corrected value is right (required)."),
+    ],
+    config_path: Annotated[
+        Path, typer.Option("--config", help="Path to muster.yaml.")
+    ] = Path("muster.yaml"),
+) -> None:
+    """Record a correction for a held row, headless.
+
+    The correction is validated exactly as the dashboard form validates it —
+    each value must coerce to its field's declared type and pass that
+    field's rules — then appended to runs/resolutions.jsonl. Nothing is
+    applied until the next 'muster run', which re-validates the whole row
+    against the full rule set before the row rejoins the governed dataset.
+    A newer record for the same fingerprint supersedes an older one.
+    """
+    try:
+        config = load_config(config_path)
+    except ConfigError as exc:
+        errors.print(str(exc))
+        raise typer.Exit(code=1) from exc
+    if not note.strip():
+        errors.print("--note is required: say why the corrected value is right.")
+        raise typer.Exit(code=1)
+    if len(note) > MAX_NOTE_LENGTH:
+        errors.print(f"--note must be at most {MAX_NOTE_LENGTH} characters.")
+        raise typer.Exit(code=1)
+    corrected_values: dict[str, str] = {}
+    for pair in set_values:
+        field, separator, value = pair.partition("=")
+        if not separator or not field.strip():
+            errors.print(f"--set expects field=value, got '{pair}'.")
+            raise typer.Exit(code=1)
+        corrected_values[field.strip()] = value.strip()
+
+    root = config_path.resolve().parent
+    target = next(
+        (row for row in load_exceptions(root, config) if row.id == fingerprint), None
+    )
+    if target is None:
+        errors.print(
+            f"no exception with fingerprint '{fingerprint}' in the latest run; "
+            "see the dashboard's exceptions browser for current fingerprints."
+        )
+        raise typer.Exit(code=1)
+    if target.severity != "error" or not target.row:
+        errors.print(
+            "only row-level errors can be corrected; this exception is "
+            f"severity '{target.severity}'"
+            + ("" if target.row else " with no row number")
+            + "."
+        )
+        raise typer.Exit(code=1)
+    failures = check_correction(config, corrected_values)
+    if failures:
+        errors.print("correction rejected:")
+        for failure in failures:
+            errors.print(f"  - {failure}")
+        raise typer.Exit(code=1)
+    append_resolution(root, fingerprint, "corrected", note.strip(), corrected_values)
+    summary = ", ".join(f"{k}={v}" for k, v in sorted(corrected_values.items()))
+    console.print(
+        f"Correction recorded for {fingerprint} ({summary}); it applies — and "
+        "the whole row is re-validated — on the next 'muster run'."
     )
 
 

@@ -1,6 +1,7 @@
 """The bundled demo: generated, run, and misbehaving exactly as designed."""
 
 import json
+import re
 
 import polars as pl
 from typer.testing import CliRunner
@@ -58,10 +59,52 @@ def test_demo_generates_and_runs_the_full_pipeline(tmp_path, monkeypatch):
         "rows_published": 11,
         "rows_held": 5,
         "rows_superseded": 1,
+        "rows_remediated": 0,
         "errors": 4,
         "warnings": 4,
     }
     assert (demo / "output" / "report.html").is_file()
+
+    # The promised remediation arc: the demo prints the exact command that
+    # corrects the uncoercible weight on R-2004; running it and rerunning
+    # publishes the row — held 5 -> 4, published 11 -> 12 — with the human
+    # decision recorded in the manifest chain.
+    match = re.search(r"muster resolve ([0-9a-f]{16})", output)
+    assert match, "demo output should print a ready-to-paste resolve command"
+    fingerprint = match.group(1)
+    monkeypatch.chdir(demo)
+    result = runner.invoke(
+        app,
+        [
+            "resolve",
+            fingerprint,
+            "--set",
+            "tonnes=27.9",
+            "--note",
+            "weighbridge docket shows 27.9 t",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+
+    result = runner.invoke(app, ["run"])
+    assert result.exit_code == 2, result.output  # other deliberate errors remain
+    rerun = " ".join(result.output.split())
+    assert "Published 12 of 17 row(s) from 3 file(s); 4 held, 1 superseded." in rerun
+    assert "1 row(s) recovered via remediation" in rerun
+
+    republished = pl.read_csv(demo / "output" / "receivals.csv")
+    recovered = republished.filter(pl.col("receival_id") == "R-2004")
+    assert recovered.height == 1
+    assert recovered.get_column("tonnes")[0] == 27.9
+
+    run_ids = verify_chain(demo / "runs")
+    assert len(run_ids) == 2
+    manifest = json.loads(
+        (demo / "runs" / run_ids[-1] / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["totals"]["rows_remediated"] == 1
+    assert manifest["remediation"]["resolutions"] == [fingerprint]
+    monkeypatch.chdir(tmp_path)
 
     # The demo folder is also the promised playground for config generation.
     result = runner.invoke(

@@ -1,49 +1,53 @@
-"""Read-side data for the web interface, plus the append-only audit log.
+"""Read-side data for the web interface.
 
 Everything shown in the dashboard comes from artefacts the pipeline already
 writes: run manifests (trends), the archived report data (latest run),
-exceptions.csv and mapping-review.yaml. Exception resolutions never mutate
-any of those — they append to ``runs/resolutions.jsonl``, an audit log of
-who decided what and when, keyed by a stable exception fingerprint.
+exceptions.csv and mapping-review.yaml. Exception decisions — resolve,
+dismiss and correct — live in :mod:`muster.remediation` because the CLI and
+the pipeline share them; they are re-exported here for the routes.
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 
-import polars as pl
-
-from muster.config import Config
 from muster.manifest import MANIFEST_NAME, RUNS_DIRECTORY, latest_manifest_of_kind
+from muster.remediation import (
+    MAX_NOTE_LENGTH,
+    MAX_VALUE_LENGTH,
+    RESOLUTION_ACTIONS,
+    RESOLUTIONS_FILE,
+    ExceptionRow,
+    append_resolution,
+    check_correction,
+    exception_fingerprint,
+    load_exceptions,
+    load_resolutions,
+    resolutions_path,
+)
 from muster.report import REPORT_DATA_NAME, RunReportData
 
 logger = logging.getLogger(__name__)
 
-RESOLUTIONS_FILE = "resolutions.jsonl"
-RESOLUTION_ACTIONS = ("resolved", "dismissed")
-MAX_NOTE_LENGTH = 500
-
-
-@dataclass(frozen=True)
-class ExceptionRow:
-    """One exceptions.csv row with its stable fingerprint and resolution."""
-
-    id: str
-    file: str
-    row: str
-    column: str
-    value: str
-    kind: str
-    severity: str
-    reason: str
-    resolution: str | None = None  # resolved | dismissed
-    note: str | None = None
-    resolved_at: str | None = None
+__all__ = [
+    "MAX_NOTE_LENGTH",
+    "MAX_VALUE_LENGTH",
+    "RESOLUTION_ACTIONS",
+    "RESOLUTIONS_FILE",
+    "ExceptionRow",
+    "TrendPoint",
+    "append_resolution",
+    "check_correction",
+    "exception_fingerprint",
+    "latest_report",
+    "load_exceptions",
+    "load_resolutions",
+    "resolutions_path",
+    "run_trends",
+]
 
 
 @dataclass(frozen=True)
@@ -93,88 +97,3 @@ def run_trends(root: Path, limit: int = 30) -> list[TrendPoint]:
             )
         )
     return points[-limit:]
-
-
-def exception_fingerprint(
-    run_id: str, file: str, row: str, column: str, kind: str, reason: str
-) -> str:
-    """A stable identifier for one exception within one run."""
-    digest = hashlib.sha256(
-        "|".join((run_id, file, row, column, kind, reason)).encode("utf-8")
-    )
-    return digest.hexdigest()[:16]
-
-
-def resolutions_path(root: Path) -> Path:
-    return root / RUNS_DIRECTORY / RESOLUTIONS_FILE
-
-
-def load_resolutions(root: Path) -> dict[str, dict[str, str]]:
-    """The latest resolution per exception id; later entries supersede."""
-    path = resolutions_path(root)
-    if not path.is_file():
-        return {}
-    latest: dict[str, dict[str, str]] = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            entry = json.loads(line)
-        except json.JSONDecodeError:
-            logger.warning("skipping malformed resolution line")
-            continue
-        if isinstance(entry, dict) and isinstance(entry.get("id"), str):
-            latest[entry["id"]] = entry
-    return latest
-
-
-def append_resolution(root: Path, exception_id: str, action: str, note: str) -> None:
-    """Append one decision to the audit log; history is never rewritten."""
-    entry = {
-        "at": datetime.now(UTC).isoformat(timespec="seconds"),
-        "id": exception_id,
-        "action": action,
-        "note": note,
-    }
-    path = resolutions_path(root)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
-    logger.info("resolution recorded id=%s action=%s", exception_id, action)
-
-
-def load_exceptions(root: Path, config: Config) -> list[ExceptionRow]:
-    """The latest run's exceptions merged with their resolution state."""
-    found = latest_manifest_of_kind(root / RUNS_DIRECTORY, "run")
-    csv_path = root / config.output.directory / "exceptions.csv"
-    if found is None or not csv_path.is_file():
-        return []
-    run_id = str(found[1].get("run_id", ""))
-    frame = pl.read_csv(csv_path, infer_schema=False)
-    resolutions = load_resolutions(root)
-    rows: list[ExceptionRow] = []
-    for record in frame.iter_rows(named=True):
-        file = record.get("file") or ""
-        row = record.get("row") or ""
-        column = record.get("column") or ""
-        kind = record.get("kind") or ""
-        reason = record.get("reason") or ""
-        exception_id = exception_fingerprint(run_id, file, row, column, kind, reason)
-        resolution = resolutions.get(exception_id)
-        rows.append(
-            ExceptionRow(
-                id=exception_id,
-                file=file,
-                row=row,
-                column=column,
-                value=record.get("value") or "",
-                kind=kind,
-                severity=record.get("severity") or "",
-                reason=reason,
-                resolution=resolution.get("action") if resolution else None,
-                note=resolution.get("note") if resolution else None,
-                resolved_at=resolution.get("at") if resolution else None,
-            )
-        )
-    return rows

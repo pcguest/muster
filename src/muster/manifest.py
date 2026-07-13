@@ -96,13 +96,16 @@ def write_manifest(
     inputs: Sequence[tuple[str, Path, int]],
     outputs: Mapping[str, Path],
     totals: Mapping[str, int],
+    remediation_resolutions: Sequence[str] = (),
 ) -> Path:
     """Write the manifest for one run, chained to the previous manifest.
 
     ``run_dir`` comes from :func:`create_run_directory`; its siblings that
     already hold a manifest are the run history. ``inputs`` is (name, path,
     rows) per source file; ``outputs`` maps output names to written files.
-    Returns the manifest path.
+    ``remediation_resolutions`` names the audit-log decisions whose
+    corrections put rows into this run's governed dataset — the chain shows
+    exactly which human decisions shaped it. Returns the manifest path.
     """
     manifest = {
         "run_id": run_dir.name,
@@ -126,6 +129,7 @@ def write_manifest(
             for name, path in outputs.items()
         },
         "totals": dict(totals),
+        "remediation": {"resolutions": list(remediation_resolutions)},
     }
     return _write_chained(run_dir, manifest)
 

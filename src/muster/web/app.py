@@ -33,7 +33,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from muster import __version__
 from muster.assist import REVIEW_FILE_NAME, load_review_file, write_review_file
-from muster.config import Config, load_config
+from muster.config import Config, ConfigError, load_config
 from muster.manifest import RUNS_DIRECTORY
 from muster.scheduler import run_once
 from muster.web import data as web_data
@@ -56,6 +56,7 @@ _FLASH_MESSAGES = {
     "already-running": "A run is already in progress.",
     "resolved": "Exception marked resolved; the decision is in the audit log.",
     "dismissed": "Exception dismissed; the decision is in the audit log.",
+    "corrected": "Correction recorded; it applies when the pipeline next runs.",
     "accepted": "Mapping accepted; it applies from the next run.",
     "rejected": "Mapping rejected.",
     "logged-out": "Logged out.",
@@ -65,6 +66,17 @@ _REPORT_CSP = (
     "default-src 'none'; style-src 'unsafe-inline'; img-src data:; "
     "form-action 'none'; base-uri 'none'; frame-ancestors 'none'"
 )
+
+
+def _rows_awaiting_rerun(rows: list[web_data.ExceptionRow]) -> int:
+    """Distinct held rows with a recorded correction the next run will apply."""
+    return len(
+        {
+            (r.file, r.row)
+            for r in rows
+            if r.severity == "error" and r.resolution == "corrected"
+        }
+    )
 
 
 class RunState:
@@ -247,6 +259,15 @@ def create_app(root: Path, config_path: Path) -> FastAPI:
         report = web_data.latest_report(root)
         trends = web_data.run_trends(root)
         peak = max((t.rows_in for t in trends), default=0)
+        # Held rows whose correction is recorded but not yet applied by a
+        # run. A broken configuration degrades this tile to zero rather
+        # than taking the dashboard down with it.
+        try:
+            awaiting = _rows_awaiting_rerun(
+                web_data.load_exceptions(root, fresh_config())
+            )
+        except ConfigError:
+            awaiting = 0
         return render(
             request,
             "dashboard.html",
@@ -254,18 +275,19 @@ def create_app(root: Path, config_path: Path) -> FastAPI:
             report=report,
             trends=trends,
             peak_rows=peak or 1,
+            awaiting_rerun=awaiting,
         )
 
-    @app.get("/exceptions", response_class=HTMLResponse)
-    def exceptions_page(
+    def render_exceptions(
         request: Request,
         severity: str = "",
         kind: str = "",
         file: str = "",
+        state: str = "",
+        status_code: int = 200,
+        correction_error: str | None = None,
     ) -> Response:
-        if page_session(request) is None:
-            return RedirectResponse("/login", status_code=303)
-        for value in (severity, kind, file):
+        for value in (severity, kind, file, state):
             if len(value) > 200:
                 return Response("filter value too long", status_code=422)
         rows = web_data.load_exceptions(root, fresh_config())
@@ -277,9 +299,14 @@ def create_app(root: Path, config_path: Path) -> FastAPI:
             rows = [r for r in rows if r.kind == kind]
         if file:
             rows = [r for r in rows if r.file == file]
+        if state == "remediated":
+            # Corrected and awaiting a rerun: the defect is still in the
+            # latest run's record, but a correction is on file for it.
+            rows = [r for r in rows if r.resolution == "corrected"]
         return render(
             request,
             "exceptions.html",
+            status_code=status_code,
             active="exceptions",
             rows=rows,
             kinds=kinds,
@@ -287,7 +314,21 @@ def create_app(root: Path, config_path: Path) -> FastAPI:
             severity=severity,
             kind=kind,
             file=file,
+            state=state,
+            correction_error=correction_error,
         )
+
+    @app.get("/exceptions", response_class=HTMLResponse)
+    def exceptions_page(
+        request: Request,
+        severity: str = "",
+        kind: str = "",
+        file: str = "",
+        state: str = "",
+    ) -> Response:
+        if page_session(request) is None:
+            return RedirectResponse("/login", status_code=303)
+        return render_exceptions(request, severity, kind, file, state)
 
     @app.post("/exceptions/{exception_id}")
     def resolve_exception(
@@ -300,13 +341,61 @@ def create_app(root: Path, config_path: Path) -> FastAPI:
         denied = guard_mutation(request, csrf_form)
         if denied is not None:
             return denied
-        if action not in web_data.RESOLUTION_ACTIONS:
+        # "corrected" has its own route: it must carry values.
+        if action not in ("resolved", "dismissed"):
             return Response("action must be 'resolved' or 'dismissed'", status_code=422)
         known = {r.id for r in web_data.load_exceptions(root, fresh_config())}
         if exception_id not in known:
             return Response("no such exception in the latest run", status_code=404)
         web_data.append_resolution(root, exception_id, action, note.strip())
         return RedirectResponse(f"/exceptions?msg={action}", status_code=303)
+
+    @app.post("/exceptions/{exception_id}/correct")
+    def correct_exception(
+        request: Request,
+        exception_id: Annotated[str, PathParam(pattern=r"^[0-9a-f]{16}$")],
+        value: Annotated[str, Form(max_length=web_data.MAX_VALUE_LENGTH)],
+        csrf_form: Annotated[str, Form(alias="csrf", max_length=200)] = "",
+        note: Annotated[str, Form(max_length=web_data.MAX_NOTE_LENGTH)] = "",
+    ) -> Response:
+        denied = guard_mutation(request, csrf_form)
+        if denied is not None:
+            return denied
+        if not note.strip():
+            return render_exceptions(
+                request,
+                status_code=422,
+                correction_error="a note is required: say why the corrected "
+                "value is right",
+            )
+        config = fresh_config()
+        target = next(
+            (
+                r
+                for r in web_data.load_exceptions(root, config)
+                if r.id == exception_id
+            ),
+            None,
+        )
+        if target is None:
+            return Response("no such exception in the latest run", status_code=404)
+        if target.severity != "error" or not target.row or target.field is None:
+            return Response(
+                "only row-level errors with a known field can be corrected",
+                status_code=422,
+            )
+        corrected_values = {target.field: value.strip()}
+        failures = web_data.check_correction(config, corrected_values)
+        if failures:
+            return render_exceptions(
+                request,
+                status_code=422,
+                correction_error="correction rejected: " + "; ".join(failures),
+            )
+        web_data.append_resolution(
+            root, exception_id, "corrected", note.strip(), corrected_values
+        )
+        return RedirectResponse("/exceptions?msg=corrected", status_code=303)
 
     @app.get("/review", response_class=HTMLResponse)
     def review_page(request: Request) -> Response:

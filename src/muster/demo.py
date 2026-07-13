@@ -9,7 +9,11 @@ no real growers, sites or organisations appear.
 
 ``muster demo`` writes the files and a ready-confirmed muster.yaml into a
 folder and runs the full pipeline over them, so the report, exceptions file
-and manifest can be explored without touching real data.
+and manifest can be explored without touching real data. The uncoercible
+weight on ticket R-2004 doubles as the remediation walkthrough: the demo
+output prints the exact ``muster resolve`` command that corrects it, and a
+rerun watches the row rejoin the governed dataset (held 5 → 4, published
+11 → 12) with the decision recorded in the manifest chain.
 """
 
 from __future__ import annotations

@@ -26,6 +26,10 @@ fields:
     required: true
   - name: spend
     type: float
+    rules:
+      - rule: range
+        min: 0
+        severity: error
 sources: ["*.csv"]
 validation:
   keys: ["customer_id"]
@@ -200,6 +204,114 @@ def test_exception_resolution_appends_to_the_audit_log(client, project):
 
     page = client.get("/exceptions").text
     assert "dismissed" in page
+
+
+def _correctable_id(client) -> str:
+    page = client.get("/exceptions").text
+    ids = re.findall(r'action="/exceptions/([0-9a-f]{16})/correct"', page)
+    assert ids, "expected a correctable error with an inline correction form"
+    return ids[0]
+
+
+def test_correcting_a_held_row_from_the_browser(client, project):
+    _login(client, project)
+    exception_id = _correctable_id(client)
+    csrf = _csrf(client)
+
+    response = client.post(
+        f"/exceptions/{exception_id}/correct",
+        data={"csrf": csrf, "value": "12.5", "note": "till receipt says 12.5"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+
+    entries = [
+        json.loads(line)
+        for line in (project / "runs" / "resolutions.jsonl").read_text().splitlines()
+    ]
+    assert entries[-1]["action"] == "corrected"
+    assert entries[-1]["corrected_values"] == {"spend": "12.5"}
+
+    # The remediated filter and the dashboard tile both show the pending rerun.
+    filtered = client.get("/exceptions?state=remediated").text
+    assert "corrected" in filtered and "12.5" in filtered
+    assert "applies on the next run" in filtered
+    dashboard = client.get("/").text
+    assert "corrected, awaiting rerun" in dashboard
+
+    # The next run applies it: the held row rejoins the governed dataset and
+    # the run is clean, so the CLI exits 0 this time.
+    rerun = runner.invoke(cli_app, ["run"])
+    assert rerun.exit_code == 0, rerun.output
+    assert "1 row(s) recovered via remediation" in " ".join(rerun.output.split())
+    dashboard = client.get("/").text
+    assert "corrected, awaiting rerun" in dashboard  # tile remains, at zero
+
+
+def test_corrections_are_validated_server_side(client, project):
+    _login(client, project)
+    exception_id = _correctable_id(client)
+    csrf = _csrf(client)
+
+    uncoercible = client.post(
+        f"/exceptions/{exception_id}/correct",
+        data={"csrf": csrf, "value": "still-bad", "note": "n"},
+    )
+    assert uncoercible.status_code == 422
+    assert "cannot be coerced to float" in uncoercible.text
+
+    out_of_range = client.post(
+        f"/exceptions/{exception_id}/correct",
+        data={"csrf": csrf, "value": "-5", "note": "n"},
+    )
+    assert out_of_range.status_code == 422
+    assert "out of range" in out_of_range.text
+
+    no_note = client.post(
+        f"/exceptions/{exception_id}/correct",
+        data={"csrf": csrf, "value": "12.5", "note": "  "},
+    )
+    assert no_note.status_code == 422
+    assert "note is required" in no_note.text
+
+    unknown = client.post(
+        "/exceptions/0123456789abcdef/correct",
+        data={"csrf": csrf, "value": "12.5", "note": "n"},
+    )
+    assert unknown.status_code == 404
+
+    # Nothing above reached the audit log.
+    assert not (project / "runs" / "resolutions.jsonl").exists()
+
+    # A warning with no row number cannot be corrected.
+    from muster.config import load_config
+    from muster.web.data import load_exceptions
+
+    rows = load_exceptions(project, load_config(project / "muster.yaml"))
+    warning = next(r for r in rows if r.severity == "warning")
+    refused = client.post(
+        f"/exceptions/{warning.id}/correct",
+        data={"csrf": csrf, "value": "12.5", "note": "n"},
+    )
+    assert refused.status_code == 422
+    assert "only row-level errors" in refused.text
+
+
+def test_corrections_demand_auth_and_csrf(client, project):
+    assert (
+        client.post(
+            "/exceptions/0123456789abcdef/correct",
+            data={"csrf": "x", "value": "1", "note": "n"},
+        ).status_code
+        == 401
+    )
+    _login(client, project)
+    exception_id = _correctable_id(client)
+    forged = client.post(
+        f"/exceptions/{exception_id}/correct",
+        data={"csrf": "forged", "value": "1", "note": "n"},
+    )
+    assert forged.status_code == 403
 
 
 def test_resolution_input_is_validated(client, project):

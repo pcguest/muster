@@ -104,6 +104,11 @@ select, input[type="text"], input[type="password"] {
 }
 form.decide { display: flex; gap: .35rem; flex-wrap: wrap; align-items: center; }
 form.decide input[type="text"] { width: 11rem; }
+details.correct { margin-top: .45rem; }
+details.correct summary { cursor: pointer; color: var(--dim); font-size: .78rem; }
+details.correct form { margin-top: .45rem; }
+details.correct label { color: var(--dim); font-size: .78rem; display: grid; gap: .25rem; }
+.flash.error { border-color: var(--bad); color: var(--bad); margin-left: 0; margin-right: 0; }
 
 .login-panel {
   max-width: 26rem; margin: 3rem auto; background: var(--panel);

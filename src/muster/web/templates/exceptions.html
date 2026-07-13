@@ -4,6 +4,7 @@
 {% block content %}
 <section>
   <h2>Latest run's exceptions</h2>
+  {% if correction_error %}<div class="flash error">{{ correction_error }}</div>{% endif %}
   <form method="get" action="/exceptions" class="filters">
     <label>Severity
       <select name="severity">
@@ -28,6 +29,12 @@
         {% endfor %}
       </select>
     </label>
+    <label>State
+      <select name="state">
+        <option value="">all</option>
+        <option value="remediated" {% if state == 'remediated' %}selected{% endif %}>remediated — awaiting rerun</option>
+      </select>
+    </label>
     <button type="submit" class="quiet">Filter</button>
   </form>
 
@@ -47,7 +54,13 @@
       <td>{{ r.reason }}</td>
       <td>
         {% if r.resolution %}
-        <span class="tag {{ 'exact' if r.resolution == 'resolved' else 'unmapped' }}">{{ r.resolution }}</span>
+        <span class="tag {{ 'exact' if r.resolution in ('resolved', 'corrected') else 'unmapped' }}">{{ r.resolution }}</span>
+        {% if r.corrected_values %}
+        <div class="dim note">
+          {% for name, proposed in r.corrected_values.items() %}{{ name }} → {{ proposed }}{% if not loop.last %}, {% endif %}{% endfor %}
+          — applies on the next run
+        </div>
+        {% endif %}
         {% if r.note %}<div class="dim note">{{ r.note }}</div>{% endif %}
         <div class="dim note">{{ r.resolved_at }}</div>
         {% else %}
@@ -57,6 +70,19 @@
           <button type="submit" name="action" value="resolved" class="primary">Resolve</button>
           <button type="submit" name="action" value="dismissed" class="quiet">Dismiss</button>
         </form>
+        {% if r.severity == 'error' and r.field %}
+        <details class="correct">
+          <summary>Correct this value…</summary>
+          <form method="post" action="/exceptions/{{ r.id }}/correct" class="decide">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <label>{{ r.field }}
+              <input type="text" name="value" maxlength="500" value="{{ r.value }}" required>
+            </label>
+            <input type="text" name="note" maxlength="500" placeholder="note (required)" required>
+            <button type="submit" class="primary">Record correction</button>
+          </form>
+        </details>
+        {% endif %}
         {% endif %}
       </td>
     </tr>
@@ -67,6 +93,8 @@
   {% endif %}
   </div>
   <p class="meta">Decisions append to <code>runs/resolutions.jsonl</code>;
-  the run's own record is never rewritten.</p>
+  the run's own record is never rewritten. A corrected value is coerced and
+  re-validated against every rule on the next run before the row rejoins the
+  governed dataset.</p>
 </section>
 {% endblock %}

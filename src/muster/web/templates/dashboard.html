@@ -17,6 +17,7 @@
     <div class="kpi plain"><div class="n">{{ report.rows_superseded }}</div><div class="l">superseded</div></div>
     <div class="kpi {{ 'bad' if report.error_count else 'good' }}"><div class="n">{{ report.error_count }}</div><div class="l">errors</div></div>
     <div class="kpi {{ 'warn' if report.warning_count else 'good' }}"><div class="n">{{ report.warning_count }}</div><div class="l">warnings</div></div>
+    <div class="kpi {{ 'warn' if awaiting_rerun else 'plain' }}"><div class="n">{{ awaiting_rerun }}</div><div class="l">corrected, awaiting rerun</div></div>
   </div>
   <p class="meta">{{ report.files_read }} file(s) in {{ '%.2f' | format(report.duration_seconds) }}s
   · config <code>{{ report.config_file }}</code>

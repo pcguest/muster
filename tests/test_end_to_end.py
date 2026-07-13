@@ -131,6 +131,7 @@ def test_init_profile_run_report(tmp_path, monkeypatch):
         "rows_published": 11,
         "rows_held": 4,
         "rows_superseded": 1,
+        "rows_remediated": 0,
         "errors": 3,
         "warnings": 4,
     }
