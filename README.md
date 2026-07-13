@@ -46,9 +46,12 @@ it could not handle and everything it did.
 Requires Python 3.11 or later.
 
 ```sh
-pipx install muster          # or: pipx install . from a clone
+git clone https://github.com/pcguest/muster && cd muster
+pipx install .
 muster demo
 ```
+
+(PyPI publication is pending; until then, install from a clone.)
 
 `muster demo` writes three deliberately disagreeing, entirely synthetic
 grain-receival spreadsheets and runs the whole pipeline over them: open

@@ -61,11 +61,11 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/patrickcguest/muster"
-Repository = "https://github.com/patrickcguest/muster"
-Documentation = "https://github.com/patrickcguest/muster/tree/main/docs"
-Changelog = "https://github.com/patrickcguest/muster/blob/main/CHANGELOG.md"
-Issues = "https://github.com/patrickcguest/muster/issues"
+Homepage = "https://github.com/pcguest/muster"
+Repository = "https://github.com/pcguest/muster"
+Documentation = "https://github.com/pcguest/muster/tree/main/docs"
+Changelog = "https://github.com/pcguest/muster/blob/main/CHANGELOG.md"
+Issues = "https://github.com/pcguest/muster/issues"
 
 [project.scripts]
 muster = "muster.cli:app"

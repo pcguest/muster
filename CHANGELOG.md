@@ -139,4 +139,4 @@ finishes the documentation, packaging and release engineering.
   `muster.yaml`; path confinement, file size limits and structured
   logging.
 
-[1.0.0]: https://github.com/patrickcguest/muster/releases/tag/v1.0.0
+[1.0.0]: https://github.com/pcguest/muster/releases/tag/v1.0.0
