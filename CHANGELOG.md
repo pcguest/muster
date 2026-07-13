@@ -4,6 +4,19 @@ All notable changes to Muster are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and Muster
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] — 2026-07-13
+
+### Fixed
+
+- The CI lint job failed in `mypy --strict` with "Library stubs not
+  installed for yaml" in config.py, scaffold.py and assist.py. The dev
+  extra never declared `types-PyYAML`; the check passed locally only
+  because the stubs happened to be installed there. The stubs are now a
+  dev dependency, so the local and CI environments are identical.
+- The lint job upgrades pip before installing: `pip-audit` audits the
+  whole environment, pip included, so a stale runner pip with known
+  vulnerabilities would fail the gate on its own.
+
 ## [1.0.0] — 2026-07-13
 
 First stable release. No behavioural changes to the pipeline; this release
@@ -139,4 +152,5 @@ finishes the documentation, packaging and release engineering.
   `muster.yaml`; path confinement, file size limits and structured
   logging.
 
+[1.0.1]: https://github.com/pcguest/muster/releases/tag/v1.0.1
 [1.0.0]: https://github.com/pcguest/muster/releases/tag/v1.0.0
